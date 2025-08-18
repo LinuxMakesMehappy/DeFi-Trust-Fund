@@ -160,7 +160,7 @@ total_weight = base_weight * referral_multiplier * early_adopter_multiplier
 ### Quick Start
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/DeFi-Trust-Fund.git
+git clone https://github.com/LinuxMakesMehappy/DeFi-Trust-Fund.git
 cd DeFi-Trust-Fund
 
 # Install dependencies
