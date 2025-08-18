@@ -18,13 +18,6 @@ pub mod defi_trust_fund {
         pub est_apy: f64,
     }
 
-    #[event]
-    pub struct ReferralEvent {
-        pub referrer: Pubkey,
-        pub referred: Pubkey,
-        pub fund_index: u64,
-    }
-
     #[derive(Accounts)]
     #[instruction(fund_index: u64)]
     pub struct InitializeFund<'info> {
@@ -41,7 +34,7 @@ pub mod defi_trust_fund {
         #[account(
             init,
             payer = admin,
-            space = 8 + 32 + 32 + 32 + 8 + 8 + 8 + 8,
+            space = 8 + 32 + 32 + 8 + 8 + 8,
             seeds = [b"fund", fund_index.to_le_bytes().as_ref()],
             bump
         )]
@@ -64,21 +57,10 @@ pub mod defi_trust_fund {
             bump
         )]
         pub tier_nft_mint: Account<'info, Mint>,
-        #[account(
-            init,
-            payer = admin,
-            mint::decimals = 0,
-            mint::authority = admin,
-            seeds = [b"referrer_nft_mint", fund_index.to_le_bytes().as_ref()],
-            bump
-        )]
-        pub referrer_nft_mint: Account<'info, Mint>,
         #[account(mut)]
         pub stake_metadata_account: AccountInfo<'info>,
         #[account(mut)]
         pub tier_metadata_account: AccountInfo<'info>,
-        #[account(mut)]
-        pub referrer_metadata_account: AccountInfo<'info>,
         #[account(mut)]
         pub yield_reserve: AccountInfo<'info>,
         #[account(
@@ -125,13 +107,9 @@ pub mod defi_trust_fund {
         #[account(mut)]
         pub sentinel_tier_ata: Account<'info, TokenAccount>,
         #[account(mut)]
-        pub sentinel_referrer_ata: Account<'info, TokenAccount>,
-        #[account(mut)]
         pub stake_nft_mint: Account<'info, Mint>,
         #[account(mut)]
         pub tier_nft_mint: Account<'info, Mint>,
-        #[account(mut)]
-        pub referrer_nft_mint: Account<'info, Mint>,
         #[account(mut)]
         pub tier_metadata_account: AccountInfo<'info>,
         #[account(mut)]
@@ -182,18 +160,14 @@ pub mod defi_trust_fund {
         #[account(mut)]
         pub sentinel_tier_ata: Account<'info, TokenAccount>,
         #[account(mut)]
-        pub sentinel_referrer_ata: Account<'info, TokenAccount>,
-        #[account(mut)]
         pub stake_nft_mint: Account<'info, Mint>,
         #[account(mut)]
         pub tier_nft_mint: Account<'info, Mint>,
-        #[account(mut)]
-        pub referrer_nft_mint: Account<'info, Mint>,
         pub token_program: Program<'info, Token>,
     }
 
     #[derive(Accounts)]
-    #[instruction(fund_index: u64, amount: u64, input_mint: Pubkey, referrer: Option<Pubkey>)]
+    #[instruction(fund_index: u64, amount: u64, input_mint: Pubkey)]
     pub struct Deposit<'info> {
         #[account(mut)]
         pub user: Signer<'info>,
@@ -207,7 +181,7 @@ pub mod defi_trust_fund {
         #[account(
             init_if_needed,
             payer = user,
-            space = 8 + 8 + 8 + 1 + 32 + 8 + 1,
+            space = 8 + 8 + 8 + 1 + 1,
             seeds = [b"user_stake", user.key().as_ref(), fund_index.to_le_bytes().as_ref()],
             bump
         )]
@@ -217,19 +191,13 @@ pub mod defi_trust_fund {
         #[account(mut)]
         pub sentinel_tier_ata: Account<'info, TokenAccount>,
         #[account(mut)]
-        pub sentinel_referrer_ata: Account<'info, TokenAccount>,
-        #[account(mut)]
         pub stake_nft_mint: Account<'info, Mint>,
         #[account(mut)]
         pub tier_nft_mint: Account<'info, Mint>,
         #[account(mut)]
-        pub referrer_nft_mint: Account<'info, Mint>,
-        #[account(mut)]
         pub stake_metadata_account: AccountInfo<'info>,
         #[account(mut)]
         pub tier_metadata_account: AccountInfo<'info>,
-        #[account(mut)]
-        pub referrer_metadata_account: AccountInfo<'info>,
         #[account(mut)]
         pub program_vault: AccountInfo<'info>,
         #[account(mut)]
@@ -389,10 +357,8 @@ pub mod defi_trust_fund {
         let fund = &mut ctx.accounts.fund;
         fund.stake_nft_mint = ctx.accounts.stake_nft_mint.key();
         fund.tier_nft_mint = ctx.accounts.tier_nft_mint.key();
-        fund.referrer_nft_mint = ctx.accounts.referrer_nft_mint.key();
         fund.total_deposits = 0;
         fund.user_count = 0;
-        fund.early_adopters = 0;
         fund.last_rebalance_timestamp = Clock::get()?.unix_timestamp as u64;
 
         // Create metadata for Stake NFT
@@ -433,27 +399,6 @@ pub mod defi_trust_fund {
             format!("Fund {} Tier 1 Badge", fund_index),
             format!("F{}T1", fund_index),
             "Soulbound tier 1 badge".to_string(),
-            true,
-            None,
-            Some(spl_token_metadata::state::TokenStandard::NonFungible),
-        )?;
-
-        // Create metadata for Referrer NFT
-        let cpi_accounts = CreateMetadataAccountsV3 {
-            metadata: ctx.accounts.referrer_metadata_account.to_account_info(),
-            mint: ctx.accounts.referrer_nft_mint.to_account_info(),
-            mint_authority: ctx.accounts.admin.to_account_info(),
-            payer: ctx.accounts.admin.to_account_info(),
-            update_authority: ctx.accounts.admin.to_account_info(),
-            system_program: ctx.accounts.system_program.to_account_info(),
-            rent: ctx.accounts.rent.to_account_info(),
-        };
-        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-        create_metadata_accounts_v3(
-            cpi_ctx,
-            format!("Fund {} Referrer Badge", fund_index),
-            format!("F{}REF", fund_index),
-            "Referral program badge".to_string(),
             true,
             None,
             Some(spl_token_metadata::state::TokenStandard::NonFungible),
@@ -612,55 +557,16 @@ pub mod defi_trust_fund {
             user_stake.tier = 0;
         }
 
-        // Burn Referrer NFT
-        if ctx.accounts.sentinel_referrer_ata.amount >= 1 && ctx.accounts.sentinel_referrer_ata.mint == fund.referrer_nft_mint {
-            let cpi_accounts = Burn {
-                mint: ctx.accounts.referrer_nft_mint.to_account_info(),
-                from: ctx.accounts.sentinel_referrer_ata.to_account_info(),
-                authority: ctx.accounts.sentinel_referrer_ata.to_account_info(),
-            };
-            let cpi_program = ctx.accounts.token_program.to_account_info();
-            token::burn(CpiContext::new(cpi_program, cpi_accounts), 1)?;
-            user_stake.referrer = Pubkey::default();
-            user_stake.referral_expiry = 0;
-        }
-
         Ok(())
     }
 
-    pub fn deposit(ctx: Context<Deposit>, fund_index: u64, amount: u64, input_mint: Pubkey, referrer: Option<Pubkey>) -> Result<()> {
+    pub fn deposit(ctx: Context<Deposit>, fund_index: u64, amount: u64, input_mint: Pubkey) -> Result<()> {
         let fund = &mut ctx.accounts.fund;
         let is_first_deposit = ctx.accounts.user_stake.deposit_amount == 0;
 
         if is_first_deposit {
             require_lt!(fund.user_count, 100, ErrorCode::FundFull);
             fund.user_count = fund.user_count.checked_add(1).ok_or(ErrorCode::ArithmeticOverflow)?;
-            if fund.early_adopters < 10 {
-                fund.early_adopters = fund.early_adopters.checked_add(1).ok_or(ErrorCode::ArithmeticOverflow)?;
-            }
-            
-            // Set referrer if provided
-            if let Some(referrer_key) = referrer {
-                ctx.accounts.user_stake.referrer = referrer_key;
-                let current_time = Clock::get()?.unix_timestamp as u64;
-                ctx.accounts.user_stake.referral_expiry = current_time + 90 * 24 * 3600; // 3 months
-                
-                // Mint referrer badge to sentinel ATA (soulbound)
-                let cpi_accounts = MintTo {
-                    mint: ctx.accounts.referrer_nft_mint.to_account_info(),
-                    to: ctx.accounts.sentinel_referrer_ata.to_account_info(),
-                    authority: ctx.accounts.admin.to_account_info(),
-                };
-                let cpi_program = ctx.accounts.token_program.to_account_info();
-                token::mint_to(CpiContext::new(cpi_program, cpi_accounts), 1)?;
-                
-                // Emit referral event
-                emit!(ReferralEvent {
-                    referrer: referrer_key,
-                    referred: ctx.accounts.user.key(),
-                    fund_index,
-                });
-            }
         } else {
             require!(ctx.accounts.sentinel_stake_ata.amount >= 1 && ctx.accounts.sentinel_stake_ata.mint == fund.stake_nft_mint, ErrorCode::UnauthorizedWallet);
             require!(ctx.accounts.sentinel_tier_ata.amount >= 1 && ctx.accounts.sentinel_tier_ata.mint == fund.tier_nft_mint, ErrorCode::InvalidTierNFT);
@@ -808,23 +714,7 @@ pub mod defi_trust_fund {
         let fund = &mut ctx.accounts.fund;
         fund.total_deposits = fund.total_deposits.checked_add(sol_amount).ok_or(ErrorCode::ArithmeticOverflow)?;
 
-        // Gas rebate for first deposit
-        if is_first_deposit {
-            let rebate_amount = 5000; // ~0.000005 SOL
-            let transfer_ix = system_instruction::transfer(
-                &ctx.accounts.yield_reserve.key(),
-                &ctx.accounts.user.key(),
-                rebate_amount,
-            );
-            invoke(
-                &transfer_ix,
-                &[
-                    ctx.accounts.yield_reserve.clone(),
-                    ctx.accounts.user.to_account_info(),
-                    ctx.accounts.system_program.to_account_info(),
-                ],
-            )?;
-        }
+
 
         // Reinvest fee
         if fee_amount > 0 {
@@ -880,7 +770,6 @@ pub mod defi_trust_fund {
         require_gt!(user_stake.deposit_amount, 0, ErrorCode::NoDeposit);
 
         let current_time = Clock::get()?.unix_timestamp as u64;
-        let has_active_referral = user_stake.referrer != Pubkey::default() && current_time < user_stake.referral_expiry;
         
         let base_weight = match user_stake.tier {
             1 => 1.0,
@@ -889,10 +778,7 @@ pub mod defi_trust_fund {
             _ => return err!(ErrorCode::InvalidTier),
         };
         
-        let referral_multiplier = if has_active_referral { 1.1 } else { 1.0 };
-        let early_adopter_multiplier = if ctx.accounts.fund.early_adopters < 10 && user_stake.deposit_amount > 0 { 1.1 } else { 1.0 };
-        
-        let weight = base_weight * referral_multiplier * early_adopter_multiplier;
+        let weight = base_weight;
 
         let protocol_reinvestment = if user_stake.tier == 3 { 0.0 } else { 0.2 };
         let user_reinvestment = user_stake.auto_reinvest_percentage as f64 / 100.0;
@@ -1078,7 +964,7 @@ pub mod defi_trust_fund {
         Ok(fund_manager.fund_count)
     }
 
-    pub fn get_user_info(ctx: Context<GetUserInfo>, fund_index: u64) -> Result<(u64, u64, u8, bool, bool, Pubkey, u64, u8)> {
+    pub fn get_user_info(ctx: Context<GetUserInfo>, fund_index: u64) -> Result<(u64, u64, u8, bool, bool)> {
         let has_stake_nft = ctx.accounts.sentinel_stake_ata.amount >= 1 && 
                            ctx.accounts.sentinel_stake_ata.mint == ctx.accounts.fund.stake_nft_mint;
         let has_tier_nft = ctx.accounts.sentinel_tier_ata.amount >= 1 && 
@@ -1089,9 +975,6 @@ pub mod defi_trust_fund {
             ctx.accounts.user_stake.tier,
             has_stake_nft,
             has_tier_nft,
-            ctx.accounts.user_stake.referrer,
-            ctx.accounts.user_stake.referral_expiry,
-            ctx.accounts.user_stake.auto_reinvest_percentage,
         ))
     }
 
@@ -1114,10 +997,8 @@ pub struct FundManager {
 pub struct Fund {
     pub stake_nft_mint: Pubkey,
     pub tier_nft_mint: Pubkey,
-    pub referrer_nft_mint: Pubkey,
     pub total_deposits: u64,
     pub user_count: u64,
-    pub early_adopters: u8,
     pub last_rebalance_timestamp: u64,
 }
 
@@ -1126,8 +1007,6 @@ pub struct UserStake {
     pub deposit_amount: u64,
     pub stake_timestamp: u64,
     pub tier: u8,
-    pub referrer: Pubkey,
-    pub referral_expiry: u64,
     pub auto_reinvest_percentage: u8,
 }
 
