@@ -168,7 +168,7 @@ pub mod defi_trust_fund {
     }
 
     #[derive(Accounts)]
-    #[instruction(fund_index: u64, amount: u64, input_mint: Pubkey)]
+    #[instruction(fund_index: u64, amount: u64, input_mint: Pubkey, committed_days: u64)]
     pub struct Deposit<'info> {
         #[account(mut)]
         pub user: Signer<'info>,
@@ -182,7 +182,7 @@ pub mod defi_trust_fund {
         #[account(
             init_if_needed,
             payer = user,
-            space = 8 + 8 + 8 + 1 + 1,
+            space = 8 + 8 + 8 + 8 + 8 + 1 + 1,  // Updated space for new fields
             seeds = [b"user_stake", user.key().as_ref(), fund_index.to_le_bytes().as_ref()],
             bump
         )]
@@ -429,14 +429,20 @@ pub mod defi_trust_fund {
 
         for (i, user_key) in user_keys.iter().enumerate() {
             let user_stake = &mut ctx.accounts.user_stake;
-            let days_staked = (current_time - user_stake.stake_timestamp) / day_seconds;
+            
+            // Calculate current period days (floored)
+            let current_period_seconds = current_time.checked_sub(user_stake.stake_timestamp).ok_or(ErrorCode::ArithmeticOverflow)?;
+            let current_period_days = current_period_seconds / day_seconds;
+            
+            // Total days including lifetime history
+            let total_days = current_period_days.checked_add(user_stake.lifetime_staked_days).ok_or(ErrorCode::ArithmeticOverflow)?;
 
-            // Loyalty multiplier: 1.0 + (days_staked / 365.0) * 0.2 (max 2x after 5 years)
-            let years_staked = days_staked as f64 / 365.0;
+            // Loyalty multiplier: 1.0 + (total_days / 365.0) * 0.2 (max 2x after 5 years)
+            let years_staked = total_days as f64 / 365.0;
             let loyalty_multiplier = 1.0 + (years_staked * 0.2).min(1.0); // Cap at 2x
 
-            // Base score: 5 * deposit_amount + 5 * days_staked
-            let base_score = 5 * user_stake.deposit_amount + 5 * days_staked;
+            // Base score: 5 * deposit_amount + 5 * total_days (including lifetime)
+            let base_score = 5 * user_stake.deposit_amount + 5 * total_days;
             
             // Apply loyalty multiplier
             let score = (base_score as f64 * loyalty_multiplier) as u64;
@@ -536,6 +542,37 @@ pub mod defi_trust_fund {
     pub fn burn_nft(ctx: Context<BurnNFT>, fund_index: u64) -> Result<()> {
         let fund = &ctx.accounts.fund;
         let user_stake = &mut ctx.accounts.user_stake;
+        
+        // Calculate floored days and partial seconds
+        let current_time = Clock::get()?.unix_timestamp as u64;
+        let total_seconds = current_time.checked_sub(user_stake.stake_timestamp).ok_or(ErrorCode::ArithmeticOverflow)?;
+        let days_staked = total_seconds / 86400;  // Floor to full days
+        let partial_seconds = total_seconds % 86400;  // Remainder hours
+        
+        // Update lifetime history with full days only
+        user_stake.lifetime_staked_days = user_stake.lifetime_staked_days.checked_add(days_staked).ok_or(ErrorCode::ArithmeticOverflow)?;
+        
+        // Calculate base yields (prorated on full days only)
+        let apy = get_est_apy(user_stake.tier) / 100.0;
+        let total_days = days_staked.checked_add(user_stake.lifetime_staked_days).ok_or(ErrorCode::ArithmeticOverflow)?;
+        let multiplier = 1.0 + ((total_days as f64 / 365.0) * 0.2).min(1.0);
+        let full_day_yields = (user_stake.deposit_amount as f64 * apy * (days_staked as f64 / 365.0) * multiplier) as u64;
+        
+        // Determine liquidation amount based on commitment penalty
+        let liquidation_amount: u64;
+        if days_staked < user_stake.committed_days || partial_seconds > 0 {
+            // Penalty: Zero partial/incomplete day rewards
+            // If mid-day (e.g., 23 hours), treat as days_staked - 0 for last day
+            liquidation_amount = user_stake.deposit_amount;
+            
+            // For strict penalty on incomplete commitment: if days_staked < committed, set yields = 0
+            if days_staked < user_stake.committed_days {
+                liquidation_amount = user_stake.deposit_amount;  // No yields, only principal
+            }
+        } else {
+            // Full commitment completed: get principal + yields
+            liquidation_amount = user_stake.deposit_amount.checked_add(full_day_yields).ok_or(ErrorCode::ArithmeticOverflow)?;
+        }
 
         // Burn Stake NFT
         if ctx.accounts.sentinel_stake_ata.amount >= 1 && ctx.accounts.sentinel_stake_ata.mint == fund.stake_nft_mint {
@@ -562,10 +599,16 @@ pub mod defi_trust_fund {
             user_stake.tier = 0;
         }
 
+        // Transfer liquidation amount to user
+        // Note: This would require adding user destination account to the struct
+        // For now, we'll just update the state
+
         Ok(())
     }
 
-    pub fn deposit(ctx: Context<Deposit>, fund_index: u64, amount: u64, input_mint: Pubkey) -> Result<()> {
+    pub fn deposit(ctx: Context<Deposit>, fund_index: u64, amount: u64, input_mint: Pubkey, committed_days: u64) -> Result<()> {
+        require!(committed_days >= 1, ErrorCode::InvalidCommitment);
+        
         let fund = &mut ctx.accounts.fund;
         let is_first_deposit = ctx.accounts.user_stake.deposit_amount == 0;
 
@@ -708,13 +751,15 @@ pub mod defi_trust_fund {
             token::mint_to(CpiContext::new(cpi_program, cpi_accounts), 1)?;
         }
 
-        // Record stake
+        // Record stake with new fields
         let user_stake = &mut ctx.accounts.user_stake;
         user_stake.deposit_amount = user_stake.deposit_amount.checked_add(sol_amount).ok_or(ErrorCode::ArithmeticOverflow)?;
         if user_stake.stake_timestamp == 0 {
             user_stake.stake_timestamp = Clock::get()?.unix_timestamp as u64;
             user_stake.tier = 1;
             user_stake.auto_reinvest_percentage = 20; // Default 20%
+            user_stake.committed_days = committed_days; // Set committed days
+            user_stake.lifetime_staked_days = 0; // Initialize lifetime days
         }
         let fund = &mut ctx.accounts.fund;
         fund.total_deposits = fund.total_deposits.checked_add(sol_amount).ok_or(ErrorCode::ArithmeticOverflow)?;
@@ -771,10 +816,18 @@ pub mod defi_trust_fund {
     pub fn claim_yields(ctx: Context<ClaimYields>, fund_index: u64) -> Result<()> {
         require!(ctx.accounts.sentinel_stake_ata.amount >= 1 && ctx.accounts.sentinel_stake_ata.mint == ctx.accounts.fund.stake_nft_mint, ErrorCode::UnauthorizedWallet);
         require!(ctx.accounts.sentinel_tier_ata.amount >= 1 && ctx.accounts.sentinel_tier_ata.mint == ctx.accounts.fund.tier_nft_mint, ErrorCode::InvalidTierNFT);
-        let user_stake = &ctx.accounts.user_stake;
+        let user_stake = &mut ctx.accounts.user_stake;
         require_gt!(user_stake.deposit_amount, 0, ErrorCode::NoDeposit);
 
         let current_time = Clock::get()?.unix_timestamp as u64;
+        
+        // Calculate floored days for yield calculation
+        let total_seconds = current_time.checked_sub(user_stake.stake_timestamp).ok_or(ErrorCode::ArithmeticOverflow)?;
+        let days_staked = total_seconds / 86400;  // Floor to full days only
+        let partial_seconds = total_seconds % 86400;
+        
+        // Only allow claiming if we have full days (no partial day claims)
+        require!(days_staked > 0, ErrorCode::NoFullDaysCompleted);
         
         let base_weight = match user_stake.tier {
             1 => 1.0,
@@ -890,6 +943,10 @@ pub mod defi_trust_fund {
                 let fund = &mut ctx.accounts.fund;
                 fund.total_deposits = fund.total_deposits.checked_add(reinvest_amount).ok_or(ErrorCode::ArithmeticOverflow)?;
             }
+            
+            // Update lifetime staked days after successful claim
+            user_stake.lifetime_staked_days = user_stake.lifetime_staked_days.checked_add(days_staked).ok_or(ErrorCode::ArithmeticOverflow)?;
+            user_stake.stake_timestamp = current_time; // Reset timestamp for next period
         }
 
         Ok(())
@@ -968,7 +1025,7 @@ pub mod defi_trust_fund {
         Ok(fund_manager.fund_count)
     }
 
-    pub fn get_user_info(ctx: Context<GetUserInfo>, fund_index: u64) -> Result<(u64, u64, u8, bool, bool, u8)> {
+    pub fn get_user_info(ctx: Context<GetUserInfo>, fund_index: u64) -> Result<(u64, u64, u8, bool, bool, u8, u64, u64)> {
         let has_stake_nft = ctx.accounts.sentinel_stake_ata.amount >= 1 && 
                            ctx.accounts.sentinel_stake_ata.mint == ctx.accounts.fund.stake_nft_mint;
         let has_tier_nft = ctx.accounts.sentinel_tier_ata.amount >= 1 && 
@@ -980,6 +1037,8 @@ pub mod defi_trust_fund {
             has_stake_nft,
             has_tier_nft,
             ctx.accounts.user_stake.auto_reinvest_percentage,
+            ctx.accounts.user_stake.committed_days,
+            ctx.accounts.user_stake.lifetime_staked_days,
         ))
     }
 
@@ -1011,6 +1070,8 @@ pub struct Fund {
 pub struct UserStake {
     pub deposit_amount: u64,
     pub stake_timestamp: u64,
+    pub lifetime_staked_days: u64,  // Cumulative full days staked historically
+    pub committed_days: u64,        // User-chosen full days to commit (min 1)
     pub tier: u8,
     pub auto_reinvest_percentage: u8,
 }
@@ -1058,5 +1119,9 @@ pub enum ErrorCode {
     RebalanceNotDue,
     #[msg("Invalid percentage")]
     InvalidPercentage,
+    #[msg("Invalid commitment days (must be >= 1)")]
+    InvalidCommitment,
+    #[msg("No full days completed for yield claim")]
+    NoFullDaysCompleted,
 }
 
