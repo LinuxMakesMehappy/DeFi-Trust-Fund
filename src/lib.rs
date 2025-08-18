@@ -132,13 +132,14 @@ pub mod defi_trust_fund {
         )]
         pub fund: Account<'info, Fund>,
         #[account(mut)]
-        pub temp_scores: Account<'info, TempScores>,
-        #[account(mut)]
         pub tier_nft_mint: Account<'info, Mint>,
         #[account(mut)]
         pub tier_metadata_account: AccountInfo<'info>,
-        pub token_metadata_program: Program<'info, TokenMetadata>,
+        #[account(mut)]
+        pub temp_scores: Account<'info, TempScores>,
         pub system_program: Program<'info, System>,
+        pub token_program: Program<'info, Token>,
+        pub token_metadata_program: Program<'info, TokenMetadata>,
         pub rent: Sysvar<'info, Rent>,
     }
 
@@ -287,6 +288,10 @@ pub mod defi_trust_fund {
             constraint = sentinel_stake_ata.mint == fund.stake_nft_mint && sentinel_stake_ata.amount >= 1 @ ErrorCode::UnauthorizedWallet
         )]
         pub sentinel_stake_ata: Account<'info, TokenAccount>,
+        #[account(
+            constraint = sentinel_tier_ata.mint == fund.tier_nft_mint && sentinel_tier_ata.amount >= 1 @ ErrorCode::InvalidTierNFT
+        )]
+        pub sentinel_tier_ata: Account<'info, TokenAccount>,
         #[account(
             seeds = [b"fund", fund_index.to_le_bytes().as_ref()],
             bump
@@ -891,6 +896,8 @@ pub mod defi_trust_fund {
     }
 
     pub fn set_auto_reinvest(ctx: Context<SetAutoReinvest>, fund_index: u64, auto_reinvest_percentage: u8) -> Result<()> {
+        require!(ctx.accounts.sentinel_stake_ata.amount >= 1 && ctx.accounts.sentinel_stake_ata.mint == ctx.accounts.fund.stake_nft_mint, ErrorCode::UnauthorizedWallet);
+        require!(ctx.accounts.sentinel_tier_ata.amount >= 1 && ctx.accounts.sentinel_tier_ata.mint == ctx.accounts.fund.tier_nft_mint, ErrorCode::InvalidTierNFT);
         require!(auto_reinvest_percentage <= 100, ErrorCode::InvalidPercentage);
         ctx.accounts.user_stake.auto_reinvest_percentage = auto_reinvest_percentage;
         Ok(())
@@ -898,10 +905,7 @@ pub mod defi_trust_fund {
 
     pub fn deposit_yield_reserve(ctx: Context<DepositYieldReserve>, fund_index: u64) -> Result<()> {
         let fund = &mut ctx.accounts.fund;
-        
-        // Get actual yield reserve balance from account data
-        let yield_reserve_data = ctx.accounts.yield_reserve.try_borrow_data()?;
-        let yield_balance = u64::from_le_bytes(yield_reserve_data[0..8].try_into().unwrap());
+        let yield_balance = ctx.accounts.yield_reserve.lamports();
         
         if yield_balance > 0 {
             // Stake to JupSOL
@@ -964,7 +968,7 @@ pub mod defi_trust_fund {
         Ok(fund_manager.fund_count)
     }
 
-    pub fn get_user_info(ctx: Context<GetUserInfo>, fund_index: u64) -> Result<(u64, u64, u8, bool, bool)> {
+    pub fn get_user_info(ctx: Context<GetUserInfo>, fund_index: u64) -> Result<(u64, u64, u8, bool, bool, u8)> {
         let has_stake_nft = ctx.accounts.sentinel_stake_ata.amount >= 1 && 
                            ctx.accounts.sentinel_stake_ata.mint == ctx.accounts.fund.stake_nft_mint;
         let has_tier_nft = ctx.accounts.sentinel_tier_ata.amount >= 1 && 
@@ -975,6 +979,7 @@ pub mod defi_trust_fund {
             ctx.accounts.user_stake.tier,
             has_stake_nft,
             has_tier_nft,
+            ctx.accounts.user_stake.auto_reinvest_percentage,
         ))
     }
 
