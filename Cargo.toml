@@ -10,13 +10,13 @@ keywords = ["solana", "anchor", "defi", "staking", "liquidity", "yield-farming"]
 categories = ["blockchain", "cryptography"]
 
 [dependencies]
-anchor-lang = "0.29.0"
-anchor-spl = "0.29.0"
-solana-program = "1.16.0"
-mpl-token-metadata = "3.2.0"
+anchor-lang = "=0.29.0"
+anchor-spl = "=0.29.0"
+solana-program = "=1.16.0"
+mpl-token-metadata = "=3.2.0"
 
 [dev-dependencies]
-anchor-client = "0.29.0"
+anchor-client = "=0.29.0"
 
 [lib]
 crate-type = ["cdylib", "lib"]
@@ -29,3 +29,8 @@ opt-level = 3
 
 [profile.dev]
 overflow-checks = true
+
+[patch.crates-io]
+solana-program = "=1.16.0"
+anchor-lang = "=0.29.0"
+anchor-spl = "=0.29.0"
