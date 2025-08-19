@@ -26,8 +26,9 @@ jobs:
     - name: Setup Rust
       uses: actions-rs/toolchain@v1
       with:
-        toolchain: stable
+        toolchain: 1.70.0
         override: true
+        components: rustfmt, clippy
     
     - name: Setup Node.js
       uses: actions/setup-node@v4
@@ -77,8 +78,9 @@ jobs:
     - name: Setup Rust
       uses: actions-rs/toolchain@v1
       with:
-        toolchain: stable
+        toolchain: 1.70.0
         override: true
+        components: rustfmt, clippy
     
     - name: Setup Node.js
       uses: actions/setup-node@v4
@@ -127,8 +129,9 @@ jobs:
     - name: Setup Rust
       uses: actions-rs/toolchain@v1
       with:
-        toolchain: stable
+        toolchain: 1.70.0
         override: true
+        components: rustfmt, clippy
     
     - name: Setup Solana
       run: |
@@ -151,6 +154,7 @@ jobs:
     
     - name: Build for analysis
       run: |
+        cargo clean
         anchor build
     
     - name: Run security tests
