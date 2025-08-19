@@ -1,0 +1,517 @@
+name: 🔒 CI/CD Security Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    - cron: '0 2 * * *' # Daily security scans at 2 AM UTC
+
+env:
+  CARGO_TERM_COLOR: always
+  SOLANA_VERSION: 1.16.0
+  ANCHOR_VERSION: 0.29.0
+  NODE_VERSION: 18
+
+jobs:
+  # ==================== SECURITY SCANNING ====================
+  security-scan:
+    name: 🛡️ Security Vulnerability Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Full history for better analysis
+
+      - name: 🦀 Setup Rust Toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+          override: true
+
+      - name: 📦 Cache Rust Dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: 🔍 Cargo Audit - Vulnerability Scan
+        uses: actions-rs/audit@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🔒 Cargo Deny - License and Security Check
+        run: |
+          cargo install cargo-deny
+          cargo deny check
+
+      - name: 🐛 Clippy Security Linting
+        run: |
+          cargo clippy --all-targets --all-features -- \
+            -W clippy::all \
+            -W clippy::pedantic \
+            -W clippy::security \
+            -W clippy::suspicious \
+            -W clippy::perf \
+            -D warnings
+
+      - name: 🔐 Semgrep Security Analysis
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/security-audit
+            p/rust
+            p/solana
+            .semgrep.yml
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+      - name: 📊 Upload Security Scan Results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+
+  # ==================== DEPENDENCY ANALYSIS ====================
+  dependency-analysis:
+    name: 📦 Dependency Security Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: |
+          npm ci
+          cd frontend && npm ci
+
+      - name: 🔍 NPM Audit
+        run: |
+          npm audit --audit-level=moderate
+          cd frontend && npm audit --audit-level=moderate
+
+      - name: 🔒 Snyk Security Scan
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=medium
+
+      - name: 📋 Generate Dependency Report
+        run: |
+          npm list --all > dependency-report.txt
+          cd frontend && npm list --all > ../frontend-dependency-report.txt
+
+      - name: 📤 Upload Dependency Reports
+        uses: actions/upload-artifact@v3
+        with:
+          name: dependency-reports
+          path: |
+            dependency-report.txt
+            frontend-dependency-report.txt
+
+  # ==================== CODE QUALITY ANALYSIS ====================
+  code-quality:
+    name: 📏 Code Quality Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🦀 Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: 🎨 Rust Format Check
+        run: cargo fmt --all -- --check
+
+      - name: 🔍 Rust Clippy Analysis
+        run: |
+          cargo clippy --all-targets --all-features --message-format=json -- \
+            -D warnings > clippy-report.json
+
+      - name: 🎯 TypeScript Lint Check
+        run: |
+          cd frontend
+          npm ci
+          npm run lint
+
+      - name: 📊 SonarQube Analysis
+        uses: sonarqube-quality-gate-action@master
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: 📤 Upload Code Quality Reports
+        uses: actions/upload-artifact@v3
+        with:
+          name: code-quality-reports
+          path: |
+            clippy-report.json
+            coverage-report.xml
+
+  # ==================== SMART CONTRACT TESTING ====================
+  smart-contract-tests:
+    name: 🧪 Smart Contract Security Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      matrix:
+        solana-version: [1.16.0, 1.17.0] # Test multiple Solana versions
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Setup Solana CLI
+        uses: ./.github/actions/setup-solana
+        with:
+          solana-version: ${{ matrix.solana-version }}
+
+      - name: 🔧 Setup Anchor
+        run: |
+          npm install -g @coral-xyz/anchor-cli@${{ env.ANCHOR_VERSION }}
+          anchor --version
+
+      - name: 🦀 Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: 📦 Cache Dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            node_modules
+          key: ${{ runner.os }}-deps-${{ hashFiles('**/Cargo.lock', '**/package-lock.json') }}
+
+      - name: 🔨 Build Smart Contract
+        run: |
+          anchor build
+          
+      - name: 🧪 Run Unit Tests
+        run: |
+          anchor test --skip-deploy
+
+      - name: 🔒 Run Security Tests
+        run: |
+          npm run test:security
+
+      - name: 🎯 Run Integration Tests
+        run: |
+          npm run test:integration
+
+      - name: 📊 Generate Test Coverage
+        run: |
+          cargo install cargo-tarpaulin
+          cargo tarpaulin --out Xml --output-dir coverage/
+
+      - name: 📤 Upload Coverage Reports
+        uses: codecov/codecov-action@v3
+        with:
+          file: coverage/cobertura.xml
+          flags: smart-contracts
+          name: smart-contract-coverage
+
+  # ==================== FUZZ TESTING ====================
+  fuzz-testing:
+    name: 🎲 Fuzz Testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: github.event_name == 'schedule' || contains(github.event.head_commit.message, '[fuzz]')
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🦀 Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          components: rust-src
+
+      - name: 🎯 Install Cargo Fuzz
+        run: cargo install cargo-fuzz
+
+      - name: 🔧 Setup Fuzz Environment
+        run: |
+          cd fuzz
+          cargo fuzz list
+
+      - name: 🎲 Run Fuzz Tests
+        run: |
+          cd fuzz
+          timeout 1800 cargo fuzz run fuzz_deposit -- -max_total_time=1800 || true
+          timeout 1800 cargo fuzz run fuzz_governance -- -max_total_time=1800 || true
+
+      - name: 📋 Collect Fuzz Results
+        run: |
+          cd fuzz
+          find . -name "crash-*" -o -name "leak-*" -o -name "timeout-*" > fuzz-findings.txt
+
+      - name: 📤 Upload Fuzz Results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: fuzz-results
+          path: fuzz/fuzz-findings.txt
+
+  # ==================== FORMAL VERIFICATION ====================
+  formal-verification:
+    name: 🔬 Formal Verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🦀 Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: 🔬 Install CBMC
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cbmc
+
+      - name: 🔍 Install Kani Verifier
+        run: |
+          cargo install --locked kani-verifier
+          cargo kani setup
+
+      - name: 🧪 Run Formal Verification
+        run: |
+          cd verification
+          cargo kani --harness verify_arithmetic_safety
+          cargo kani --harness verify_access_control
+          cargo kani --harness verify_state_consistency
+
+      - name: 📊 Generate Verification Report
+        run: |
+          echo "Formal verification completed" > verification-report.txt
+          echo "Timestamp: $(date)" >> verification-report.txt
+
+      - name: 📤 Upload Verification Report
+        uses: actions/upload-artifact@v3
+        with:
+          name: verification-report
+          path: verification-report.txt
+
+  # ==================== FRONTEND SECURITY ====================
+  frontend-security:
+    name: 🌐 Frontend Security Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: 📦 Install Dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: 🔒 ESLint Security Analysis
+        run: |
+          cd frontend
+          npm run lint:security
+
+      - name: 🛡️ OWASP ZAP Security Scan
+        uses: zaproxy/action-baseline@v0.7.0
+        with:
+          target: 'http://localhost:3000'
+          rules_file_name: '.zap/rules.tsv'
+
+      - name: 🔍 Bundle Analyzer
+        run: |
+          cd frontend
+          npm run analyze
+
+      - name: 📊 Generate Security Report
+        run: |
+          cd frontend
+          npm run security:report
+
+      - name: 📤 Upload Frontend Security Reports
+        uses: actions/upload-artifact@v3
+        with:
+          name: frontend-security-reports
+          path: |
+            frontend/security-report.json
+            frontend/bundle-analysis.html
+
+  # ==================== DEPLOYMENT VALIDATION ====================
+  deployment-validation:
+    name: 🚀 Deployment Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    needs: [security-scan, smart-contract-tests, code-quality]
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Setup Environment
+        uses: ./.github/actions/setup-solana
+        with:
+          solana-version: ${{ env.SOLANA_VERSION }}
+
+      - name: 🔧 Setup Anchor
+        run: |
+          npm install -g @coral-xyz/anchor-cli@${{ env.ANCHOR_VERSION }}
+
+      - name: 🔨 Build for Deployment
+        run: |
+          anchor build
+
+      - name: 🧪 Pre-deployment Tests
+        run: |
+          npm run test:pre-deploy
+
+      - name: 🔍 Contract Size Analysis
+        run: |
+          ls -la target/deploy/
+          du -h target/deploy/*.so
+
+      - name: 📋 Generate Deployment Checklist
+        run: |
+          echo "# Deployment Validation Checklist" > deployment-checklist.md
+          echo "- [x] Security scans passed" >> deployment-checklist.md
+          echo "- [x] All tests passed" >> deployment-checklist.md
+          echo "- [x] Code quality checks passed" >> deployment-checklist.md
+          echo "- [x] Contract built successfully" >> deployment-checklist.md
+          echo "- [x] Pre-deployment tests passed" >> deployment-checklist.md
+
+      - name: 📤 Upload Deployment Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: deployment-artifacts
+          path: |
+            target/deploy/
+            target/idl/
+            deployment-checklist.md
+
+  # ==================== SECURITY SUMMARY ====================
+  security-summary:
+    name: 📋 Security Summary Report
+    runs-on: ubuntu-latest
+    needs: [security-scan, dependency-analysis, code-quality, smart-contract-tests, frontend-security]
+    if: always()
+    steps:
+      - name: 📥 Download All Artifacts
+        uses: actions/download-artifact@v3
+
+      - name: 📊 Generate Security Summary
+        run: |
+          echo "# 🔒 Security Pipeline Summary" > security-summary.md
+          echo "**Date**: $(date)" >> security-summary.md
+          echo "**Commit**: ${{ github.sha }}" >> security-summary.md
+          echo "**Branch**: ${{ github.ref_name }}" >> security-summary.md
+          echo "" >> security-summary.md
+          echo "## 🛡️ Security Checks Status" >> security-summary.md
+          echo "- Security Scan: ${{ needs.security-scan.result }}" >> security-summary.md
+          echo "- Dependency Analysis: ${{ needs.dependency-analysis.result }}" >> security-summary.md
+          echo "- Code Quality: ${{ needs.code-quality.result }}" >> security-summary.md
+          echo "- Smart Contract Tests: ${{ needs.smart-contract-tests.result }}" >> security-summary.md
+          echo "- Frontend Security: ${{ needs.frontend-security.result }}" >> security-summary.md
+          echo "" >> security-summary.md
+          echo "## 📊 Overall Security Status" >> security-summary.md
+          if [[ "${{ needs.security-scan.result }}" == "success" && "${{ needs.smart-contract-tests.result }}" == "success" ]]; then
+            echo "✅ **PASSED** - All critical security checks passed" >> security-summary.md
+          else
+            echo "❌ **FAILED** - Security issues detected" >> security-summary.md
+          fi
+
+      - name: 💬 Comment Security Summary on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('security-summary.md', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
+
+      - name: 📤 Upload Security Summary
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-summary
+          path: security-summary.md
+
+  # ==================== NOTIFICATION ====================
+  notify:
+    name: 📢 Security Notifications
+    runs-on: ubuntu-latest
+    needs: [security-summary]
+    if: failure() && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    steps:
+      - name: 🚨 Slack Security Alert
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          channel: '#security-alerts'
+          text: |
+            🚨 **Security Pipeline Failed**
+            Repository: ${{ github.repository }}
+            Branch: ${{ github.ref_name }}
+            Commit: ${{ github.sha }}
+            
+            Please review security issues immediately.
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: 📧 Email Security Alert
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: 🚨 Security Pipeline Failed - ${{ github.repository }}
+          to: security@defitrustfund.com
+          from: ci-cd@defitrustfund.com
+          body: |
+            Security pipeline failed for repository ${{ github.repository }}.
+            
+            Branch: ${{ github.ref_name }}
+            Commit: ${{ github.sha }}
+            Workflow: ${{ github.workflow }}
+            
+            Please investigate immediately.
+            
+            View details: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

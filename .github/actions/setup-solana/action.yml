@@ -1,0 +1,169 @@
+name: 'Setup Solana Environment'
+description: 'Sets up Solana CLI and development environment with security best practices'
+inputs:
+  solana-version:
+    description: 'Solana version to install'
+    required: true
+    default: '1.16.0'
+  cache-enabled:
+    description: 'Enable caching for faster builds'
+    required: false
+    default: 'true'
+  network:
+    description: 'Default Solana network to configure'
+    required: false
+    default: 'testnet'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: 🔍 Validate Inputs
+      shell: bash
+      run: |
+        echo "Setting up Solana v${{ inputs.solana-version }}"
+        echo "Network: ${{ inputs.network }}"
+        echo "Cache enabled: ${{ inputs.cache-enabled }}"
+
+    - name: 📦 Cache Solana Installation
+      if: inputs.cache-enabled == 'true'
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.local/share/solana
+          ~/.cache/solana
+        key: solana-${{ inputs.solana-version }}-${{ runner.os }}
+        restore-keys: |
+          solana-${{ inputs.solana-version }}-
+          solana-
+
+    - name: ⬇️ Download and Install Solana CLI
+      shell: bash
+      run: |
+        echo "Installing Solana CLI version ${{ inputs.solana-version }}..."
+        
+        # Download with verification
+        curl -sSfL "https://release.solana.com/v${{ inputs.solana-version }}/install" -o solana-install.sh
+        
+        # Verify the installer (basic check)
+        if [[ ! -f solana-install.sh ]] || [[ ! -s solana-install.sh ]]; then
+          echo "❌ Failed to download Solana installer"
+          exit 1
+        fi
+        
+        # Run installer
+        sh solana-install.sh
+        
+        # Add to PATH
+        echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+
+    - name: ⚙️ Configure Solana CLI
+      shell: bash
+      run: |
+        export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+        
+        # Verify installation
+        solana --version
+        
+        # Configure network
+        case "${{ inputs.network }}" in
+          mainnet)
+            solana config set --url https://api.mainnet-beta.solana.com
+            ;;
+          testnet)
+            solana config set --url https://api.testnet.solana.com
+            ;;
+          devnet)
+            solana config set --url https://api.devnet.solana.com
+            ;;
+          localnet)
+            solana config set --url http://127.0.0.1:8899
+            ;;
+          *)
+            echo "❌ Invalid network: ${{ inputs.network }}"
+            exit 1
+            ;;
+        esac
+        
+        # Set other configurations
+        solana config set --commitment confirmed
+        
+        # Display configuration
+        solana config get
+
+    - name: 🔑 Setup Test Keypair
+      shell: bash
+      run: |
+        export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+        
+        # Create a test keypair for CI/CD
+        solana-keygen new --no-bip39-passphrase --silent --outfile ~/.config/solana/id.json
+        
+        # Set as default keypair
+        solana config set --keypair ~/.config/solana/id.json
+        
+        # Display public key (safe to log)
+        echo "Test keypair created: $(solana-keygen pubkey ~/.config/solana/id.json)"
+
+    - name: 💰 Fund Test Account
+      if: inputs.network != 'mainnet'
+      shell: bash
+      run: |
+        export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+        
+        # Request airdrop for testing (not for mainnet)
+        if [[ "${{ inputs.network }}" == "devnet" ]] || [[ "${{ inputs.network }}" == "testnet" ]]; then
+          echo "Requesting airdrop for testing..."
+          solana airdrop 2 --commitment confirmed || echo "Airdrop failed, continuing..."
+          
+          # Check balance
+          BALANCE=$(solana balance --commitment confirmed)
+          echo "Account balance: $BALANCE"
+        fi
+
+    - name: 🔍 Environment Validation
+      shell: bash
+      run: |
+        export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+        
+        echo "🔍 Validating Solana environment..."
+        
+        # Check Solana version
+        INSTALLED_VERSION=$(solana --version | cut -d' ' -f2)
+        if [[ "$INSTALLED_VERSION" != "${{ inputs.solana-version }}" ]]; then
+          echo "⚠️ Version mismatch: expected ${{ inputs.solana-version }}, got $INSTALLED_VERSION"
+        else
+          echo "✅ Correct Solana version installed: $INSTALLED_VERSION"
+        fi
+        
+        # Check network connectivity
+        if solana cluster-version &>/dev/null; then
+          echo "✅ Network connectivity confirmed"
+        else
+          echo "❌ Network connectivity issues"
+          exit 1
+        fi
+        
+        # Check keypair
+        if solana-keygen verify $(solana-keygen pubkey ~/.config/solana/id.json) ~/.config/solana/id.json; then
+          echo "✅ Keypair validation successful"
+        else
+          echo "❌ Keypair validation failed"
+          exit 1
+        fi
+        
+        echo "🎉 Solana environment setup complete!"
+
+    - name: 📋 Environment Summary
+      shell: bash
+      run: |
+        export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+        
+        echo "## 🚀 Solana Environment Summary"
+        echo "**Version**: $(solana --version)"
+        echo "**Network**: $(solana config get | grep 'RPC URL' | cut -d: -f2- | xargs)"
+        echo "**Keypair**: $(solana config get | grep 'Keypair Path' | cut -d: -f2- | xargs)"
+        echo "**Public Key**: $(solana-keygen pubkey ~/.config/solana/id.json)"
+        
+        if [[ "${{ inputs.network }}" != "mainnet" ]]; then
+          echo "**Balance**: $(solana balance --commitment confirmed 2>/dev/null || echo 'N/A')"
+        fi

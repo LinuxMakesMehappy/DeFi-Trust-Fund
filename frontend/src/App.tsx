@@ -13,6 +13,7 @@ import DepositForm from './components/DepositForm';
 import UserStats from './components/UserStats';
 import TierDisplay from './components/TierDisplay';
 import YieldCalculator from './components/YieldCalculator';
+import SecurityValidator from './components/SecurityValidator';
 
 // Styles
 import '@solana/wallet-adapter-react-ui/styles.css';
@@ -26,10 +27,12 @@ function App() {
   return (
     <ConnectionProvider endpoint={endpoint}>
       <WalletProvider wallets={wallets} autoConnect>
-        <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900">
-          <Header />
-          <MainContent />
-        </div>
+        <SecurityValidator>
+          <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900">
+            <Header />
+            <MainContent />
+          </div>
+        </SecurityValidator>
       </WalletProvider>
     </ConnectionProvider>
   );

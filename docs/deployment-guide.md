@@ -1,398 +1,440 @@
-# Deployment Guide: DeFi Trust Fund
+# DeFi Trust Fund - Deployment Guide
+
+**Version**: 1.0  
+**Target**: Solana Devnet/Testnet/Mainnet  
+**Framework**: Anchor 0.29.0
+
+---
 
 ## Prerequisites
 
-### System Requirements
-- **Operating System**: Linux, macOS, or Windows
-- **RAM**: Minimum 8GB, Recommended 16GB
-- **Storage**: Minimum 50GB free space
-- **Network**: Stable internet connection
+### Development Environment
 
-### Software Requirements
-- **Rust**: 1.70+ ([Installation Guide](https://rustup.rs/))
-- **Solana CLI**: 1.16+ ([Installation Guide](https://docs.solana.com/cli/install-solana-cli-tools))
-- **Anchor CLI**: 0.29+ ([Installation Guide](https://book.anchor-lang.com/getting_started/installation.html))
-- **Node.js**: 16+ ([Installation Guide](https://nodejs.org/))
-- **Git**: Latest version
-
-### Wallet Setup
-- **Solana Wallet**: Phantom, Solflare, or other compatible wallet
-- **SOL Balance**: Minimum 5 SOL for deployment and testing
-- **RPC Endpoint**: Access to Solana RPC (Mainnet/Devnet/Testnet)
-
-## Step 1: Environment Setup
-
-### 1.1 Clone Repository
 ```bash
-git clone https://github.com/your-org/jupiter-kamino-stake.git
-cd jupiter-kamino-stake
+# Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
+
+# Install Solana CLI
+sh -c "$(curl -sSfL https://release.solana.com/v1.16.0/install)"
+
+# Install Anchor
+npm install -g @coral-xyz/anchor-cli@0.29.0
+
+# Verify installations
+solana --version
+anchor --version
+cargo --version
 ```
 
-### 1.2 Install Dependencies
+### Required Dependencies
+
 ```bash
+# Install Node.js dependencies
+npm install
+
 # Install Rust dependencies
 cargo build
 
-# Install Node.js dependencies
-npm install
+# Install frontend dependencies
+cd frontend && npm install
 ```
 
-### 1.3 Configure Solana CLI
-```bash
-# Set Solana cluster (choose one)
-solana config set --url devnet    # For development
-solana config set --url testnet   # For testing
-solana config set --url mainnet   # For production
+---
 
-# Verify configuration
-solana config get
-```
+## Configuration
 
-### 1.4 Create Wallet (if needed)
+### 1. Network Configuration
+
+#### Devnet Deployment
 ```bash
-# Generate new keypair
+# Set Solana to devnet
+solana config set --url https://api.devnet.solana.com
+
+# Create/import wallet
 solana-keygen new --outfile ~/.config/solana/id.json
+# OR import existing wallet
+solana-keygen recover --outfile ~/.config/solana/id.json
 
-# Set as default
-solana config set --keypair ~/.config/solana/id.json
-
-# Check balance
-solana balance
+# Fund wallet for deployment
+solana airdrop 10
 ```
 
-## Step 2: Program Configuration
-
-### 2.1 Update Program ID
+#### Testnet/Mainnet Configuration
 ```bash
-# Generate new program ID
-solana-keygen new --outfile target/deploy/jupiter_kamino_stake-keypair.json
+# For testnet
+solana config set --url https://api.testnet.solana.com
 
-# Get program ID
-solana-keygen pubkey target/deploy/jupiter_kamino_stake-keypair.json
+# For mainnet
+solana config set --url https://api.mainnet-beta.solana.com
 ```
 
-### 2.2 Update Configuration Files
+### 2. Environment Variables
 
-#### Update `lib.rs`
-```rust
-declare_id!("YOUR_GENERATED_PROGRAM_ID_HERE");
+Create `.env` file in project root:
+
+```bash
+# Network Configuration
+SOLANA_RPC_URL=https://api.devnet.solana.com
+ANCHOR_PROVIDER_URL=https://api.devnet.solana.com
+
+# Program Configuration
+DEFI_TRUST_FUND_PROGRAM_ID=Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS
+
+# Oracle Configuration
+SOL_USD_PRICE_FEED=H6ARHf6YXhGYeQfUzQNGk6rDNnLBQKrenN712K4AQJEG  # Pyth SOL/USD Devnet
+
+# Security Configuration
+MULTISIG_THRESHOLD=3
+MULTISIG_SIGNERS=["pubkey1", "pubkey2", "pubkey3", "pubkey4", "pubkey5"]
+
+# Frontend Configuration
+REACT_APP_SOLANA_NETWORK=devnet
+REACT_APP_PROGRAM_ID=Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS
 ```
 
-#### Update `Anchor.toml`
+### 3. Multi-Signature Setup
+
+#### Generate Signer Keypairs
+```bash
+# Generate 5 keypairs for multi-sig
+for i in {1..5}; do
+  solana-keygen new --outfile ./keys/signer$i.json --no-bip39-passphrase
+done
+
+# Extract public keys
+for i in {1..5}; do
+  echo "Signer $i: $(solana-keygen pubkey ./keys/signer$i.json)"
+done
+```
+
+#### Update Anchor.toml
 ```toml
+[features]
+seeds = false
+skip-lint = false
+
 [programs.devnet]
-jupiter_kamino_stake = "YOUR_GENERATED_PROGRAM_ID_HERE"
+defi_trust_fund = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
 
-[programs.testnet]
-jupiter_kamino_stake = "YOUR_GENERATED_PROGRAM_ID_HERE"
+[registry]
+url = "https://api.apr.dev"
 
-[programs.mainnet]
-jupiter_kamino_stake = "YOUR_GENERATED_PROGRAM_ID_HERE"
+[provider]
+cluster = "devnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
 ```
 
-### 2.3 Configure External Dependencies
+---
 
-#### Jupiter API Configuration
-```typescript
-// Add to your client configuration
-const JUPITER_API_URL = "https://quote-api.jup.ag/v6";
-const JUPITER_PROGRAM_ID = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
-```
+## Deployment Process
 
-#### Kamino Configuration
-```typescript
-// Add to your client configuration
-const KAMINO_PROGRAM_ID = "KLend2g3c5MGDmXenSmC16qBkmga6DhbVrJmzexvef";
-const KAMINO_VAULT_ADDRESS = "YOUR_KAMINO_VAULT_ADDRESS";
-```
+### 1. Smart Contract Deployment
 
-## Step 3: Build and Test
-
-### 3.1 Build Program
+#### Build and Test
 ```bash
+# Clean previous builds
+anchor clean
+
 # Build the program
 anchor build
 
-# Verify build
-ls target/deploy/
-```
-
-### 3.2 Run Tests
-```bash
-# Run all tests
+# Run comprehensive tests
 anchor test
 
-# Run specific test
-anchor test --skip-local-validator
-
-# Run with verbose output
-anchor test -- --nocapture
+# Run security-specific tests
+npm run test:security
 ```
 
-### 3.3 Verify Build Artifacts
+#### Deploy to Network
 ```bash
-# Check program binary
-ls -la target/deploy/jupiter_kamino_stake.so
-
-# Verify IDL
-cat target/idl/jupiter_kamino_stake.json
-```
-
-## Step 4: Deployment
-
-### 4.1 Deploy to Devnet (Recommended First)
-```bash
-# Deploy program
+# Deploy to devnet
 anchor deploy --provider.cluster devnet
 
 # Verify deployment
-solana program show YOUR_PROGRAM_ID --url devnet
+solana program show Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS
 ```
 
-### 4.2 Deploy to Testnet
+### 2. Initialize Protocol
+
+#### Create Initialization Script
+```typescript
+// scripts/initialize.ts
+import * as anchor from "@coral-xyz/anchor";
+import { Program } from "@coral-xyz/anchor";
+import { DeFiTrustFund } from "../target/types/defi_trust_fund";
+
+async function initialize() {
+  const provider = anchor.AnchorProvider.env();
+  anchor.setProvider(provider);
+  
+  const program = anchor.workspace.DeFiTrustFund as Program<DeFiTrustFund>;
+  
+  // Initialize pool with security parameters
+  const maxApy = 5000; // 50%
+  const minCommitmentDays = 1;
+  const maxCommitmentDays = 365;
+  const solPriceFeed = new anchor.web3.PublicKey("H6ARHf6YXhGYeQfUzQNGk6rDNnLBQKrenN712K4AQJEG");
+  
+  await program.methods
+    .initializePool(maxApy, minCommitmentDays, maxCommitmentDays, solPriceFeed)
+    .rpc();
+    
+  console.log("Protocol initialized successfully!");
+}
+
+initialize().catch(console.error);
+```
+
+#### Run Initialization
 ```bash
-# Switch to testnet
-solana config set --url testnet
-
-# Deploy program
-anchor deploy --provider.cluster testnet
-
-# Verify deployment
-solana program show YOUR_PROGRAM_ID --url testnet
+npx ts-node scripts/initialize.ts
 ```
 
-### 4.3 Deploy to Mainnet
+### 3. Multi-Signature Configuration
+
+#### Setup Multi-Sig Governance
+```typescript
+// scripts/setup-multisig.ts
+import * as anchor from "@coral-xyz/anchor";
+
+async function setupMultisig() {
+  // Add additional signers
+  const signers = [
+    new anchor.web3.PublicKey("signer1_pubkey"),
+    new anchor.web3.PublicKey("signer2_pubkey"),
+    new anchor.web3.PublicKey("signer3_pubkey"),
+    new anchor.web3.PublicKey("signer4_pubkey"),
+    new anchor.web3.PublicKey("signer5_pubkey"),
+  ];
+  
+  for (const signer of signers.slice(1)) { // Skip first (already added)
+    await program.methods
+      .addMultisigSigner(signer)
+      .rpc();
+  }
+  
+  // Set threshold to 3-of-5
+  await program.methods
+    .updateMultisigThreshold(3)
+    .rpc();
+    
+  console.log("Multi-signature governance configured!");
+}
+```
+
+### 4. Frontend Deployment
+
+#### Build Frontend
 ```bash
-# Switch to mainnet
-solana config set --url mainnet
+cd frontend
 
-# Deploy program (BE CAREFUL!)
-anchor deploy --provider.cluster mainnet
+# Install dependencies
+npm install
 
-# Verify deployment
-solana program show YOUR_PROGRAM_ID --url mainnet
+# Build for production
+npm run build
+
+# Test locally
+npm start
 ```
 
-## Step 5: Post-Deployment Setup
-
-### 5.1 Initialize Fund Manager
-```typescript
-import { Program, AnchorProvider, web3 } from "@coral-xyz/anchor";
-import { JupiterKaminoStake } from "../target/types/jupiter_kamino_stake";
-
-const provider = AnchorProvider.env();
-const program = new Program<JupiterKaminoStake>(IDL, PROGRAM_ID, provider);
-
-// Initialize fund manager
-const fundManagerPda = web3.PublicKey.findProgramAddressSync(
-  [Buffer.from("fund_manager")],
-  program.programId
-)[0];
-
-await program.methods
-  .initializeFund(new web3.BN(0))
-  .accounts({
-    admin: provider.wallet.publicKey,
-    fundManager: fundManagerPda,
-    // ... other accounts
-  })
-  .rpc();
-```
-
-### 5.2 Create First Fund
-```typescript
-// Create fund with index 0
-const fundPda = web3.PublicKey.findProgramAddressSync(
-  [Buffer.from("fund"), new web3.BN(0).toArrayLike(Buffer, "le", 8)],
-  program.programId
-)[0];
-
-await program.methods
-  .initializeFund(new web3.BN(0))
-  .accounts({
-    admin: provider.wallet.publicKey,
-    fundManager: fundManagerPda,
-    fund: fundPda,
-    // ... other accounts
-  })
-  .rpc();
-```
-
-### 5.3 Verify Setup
-```typescript
-// Check fund manager
-const fundManager = await program.account.fundManager.fetch(fundManagerPda);
-console.log("Fund count:", fundManager.fundCount.toNumber());
-
-// Check fund
-const fund = await program.account.fund.fetch(fundPda);
-console.log("Fund total deposits:", fund.totalDeposits.toNumber());
-console.log("Fund user count:", fund.userCount);
-```
-
-## Step 6: Integration Testing
-
-### 6.1 Test Deposit Functionality
-```typescript
-// Test user deposit
-const user = web3.Keypair.generate();
-const depositAmount = new web3.BN(1 * web3.LAMPORTS_PER_SOL);
-
-await program.methods
-  .deposit(new web3.BN(0), depositAmount)
-  .accounts({
-    user: user.publicKey,
-    fund: fundPda,
-    // ... other accounts
-  })
-  .signers([user])
-  .rpc();
-```
-
-### 6.2 Test Yield Claiming
-```typescript
-// Test yield claiming
-await program.methods
-  .claimYields(new web3.BN(0))
-  .accounts({
-    user: user.publicKey,
-    fund: fundPda,
-    // ... other accounts
-  })
-  .signers([user])
-  .rpc();
-```
-
-### 6.3 Test Rebalancing
-```typescript
-// Test rebalancing trigger
-await program.methods
-  .triggerRebalance(new web3.BN(0))
-  .accounts({
-    caller: provider.wallet.publicKey,
-    fund: fundPda,
-  })
-  .rpc();
-```
-
-## Step 7: Production Configuration
-
-### 7.1 Environment Variables
+#### Deploy to Hosting
 ```bash
-# Create .env file
-cat > .env << EOF
-SOLANA_CLUSTER=mainnet
-PROGRAM_ID=YOUR_PROGRAM_ID
-JUPITER_API_URL=https://quote-api.jup.ag/v6
-KAMINO_PROGRAM_ID=KLend2g3c5MGDmXenSmC16qBkmga6DhbVrJmzexvef
-PYTH_PROGRAM_ID=HZRCwxP2Vq9PCpPXooayhJ2bxTpo5xfpQrwB1svh332p
-EOF
+# Example: Vercel deployment
+npm install -g vercel
+vercel --prod
+
+# Example: Netlify deployment
+npm install -g netlify-cli
+netlify deploy --prod --dir=build
 ```
 
-### 7.2 Monitoring Setup
+---
+
+## Security Checklist
+
+### Pre-Deployment Security ✅
+
+- [ ] **Smart Contract Audit**: Comprehensive security review completed
+- [ ] **Test Coverage**: 95%+ coverage with security tests
+- [ ] **Dependency Audit**: All dependencies scanned for vulnerabilities
+- [ ] **Multi-Signature Setup**: Proper governance configuration
+- [ ] **Oracle Configuration**: Price feeds validated and tested
+- [ ] **Emergency Controls**: Pause mechanisms tested
+- [ ] **Rate Limiting**: Spam protection verified
+- [ ] **Access Control**: Authorization properly configured
+
+### Post-Deployment Verification ✅
+
+- [ ] **Program Deployment**: Contract deployed to correct address
+- [ ] **Initialization**: Pool properly initialized with correct parameters
+- [ ] **Multi-Sig Active**: Governance controls operational
+- [ ] **Oracle Integration**: Price feeds functioning correctly
+- [ ] **Frontend Connection**: UI properly connected to contract
+- [ ] **Security Monitoring**: Alerting systems operational
+- [ ] **Emergency Procedures**: Response protocols documented
+
+---
+
+## Monitoring and Maintenance
+
+### 1. Real-Time Monitoring
+
+#### Set up monitoring dashboard
 ```typescript
-// Add monitoring for events
-program.addEventListener('TierRebalanceEvent', (event) => {
-  console.log('Tier rebalance:', event);
-});
+// monitoring/dashboard.ts
+import { Connection, PublicKey } from "@solana/web3.js";
 
-program.addEventListener('FeeReinvestmentEvent', (event) => {
-  console.log('Fee reinvestment:', event);
-});
+const connection = new Connection("https://api.devnet.solana.com");
+const programId = new PublicKey("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
 
-program.addEventListener('YieldReinvestmentEvent', (event) => {
-  console.log('Yield reinvestment:', event);
+// Monitor program account changes
+connection.onAccountChange(programId, (accountInfo) => {
+  console.log("Program account updated:", accountInfo);
+  // Send alerts for unusual activity
 });
 ```
 
-### 7.3 Security Considerations
-- **Multi-sig Wallet**: Use multi-signature wallet for admin operations
-- **Rate Limiting**: Implement rate limiting for deposit/claim operations
-- **Emergency Pause**: Add emergency pause functionality
-- **Audit**: Conduct security audit before mainnet deployment
+#### Key Metrics to Monitor
+- Total Value Locked (TVL)
+- Number of active users
+- Transaction volume and frequency
+- Error rates and failed transactions
+- Oracle price feed status
+- Multi-signature proposal activity
 
-## Step 8: Maintenance
+### 2. Security Monitoring
 
-### 8.1 Regular Monitoring
+#### Automated Alerts
 ```bash
-# Monitor program logs
-solana logs YOUR_PROGRAM_ID
+# Set up automated monitoring
+npm install @solana/web3.js @solana/spl-token
 
-# Check program balance
-solana balance YOUR_PROGRAM_ID
-
-# Monitor account sizes
-solana account YOUR_PROGRAM_ID
+# Create monitoring scripts for:
+# - Large transactions (>10 SOL)
+# - Failed transactions
+# - Oracle price deviations
+# - Emergency pause triggers
 ```
 
-### 8.2 Backup Procedures
+#### Manual Checks
+- Weekly security review of transactions
+- Monthly governance activity audit
+- Quarterly dependency vulnerability scan
+- Semi-annual security posture assessment
+
+### 3. Maintenance Procedures
+
+#### Regular Updates
 ```bash
-# Backup program binary
-cp target/deploy/jupiter_kamino_stake.so backup/
+# Update dependencies monthly
+npm audit fix
+cargo update
 
-# Backup IDL
-cp target/idl/jupiter_kamino_stake.json backup/
-
-# Backup keypair (SECURE!)
-cp target/deploy/jupiter_kamino_stake-keypair.json backup/
-```
-
-### 8.3 Update Procedures
-```bash
-# Build new version
+# Rebuild and test
 anchor build
-
-# Deploy update
-anchor deploy --program-id YOUR_PROGRAM_ID
-
-# Verify update
-solana program show YOUR_PROGRAM_ID
+anchor test
 ```
+
+#### Emergency Procedures
+1. **Immediate Response**: Pause protocol if critical issue detected
+2. **Assessment**: Evaluate scope and impact of issue
+3. **Communication**: Notify users and community
+4. **Resolution**: Implement fix and resume operations
+5. **Post-Mortem**: Document incident and improve procedures
+
+---
 
 ## Troubleshooting
 
-### Common Issues
+### Common Deployment Issues
 
-#### Build Errors
-```bash
-# Clean and rebuild
-anchor clean
-anchor build
-
-# Update dependencies
-cargo update
-```
-
-#### Deployment Errors
+#### 1. Insufficient SOL for Deployment
 ```bash
 # Check balance
 solana balance
 
-# Check cluster
-solana config get
-
-# Verify program ID
-solana-keygen pubkey target/deploy/jupiter_kamino_stake-keypair.json
+# Request more SOL (devnet/testnet only)
+solana airdrop 10
 ```
 
-#### Test Failures
+#### 2. Program Build Failures
 ```bash
-# Run with local validator
-anchor test --skip-local-validator
+# Clean and rebuild
+anchor clean
+cargo clean
+anchor build
+```
 
-# Check logs
-anchor test -- --nocapture
+#### 3. Test Failures
+```bash
+# Run specific test suite
+anchor test tests/security-tests.ts
+
+# Debug specific test
+anchor test --skip-deploy tests/specific-test.ts
+```
+
+#### 4. RPC Connection Issues
+```bash
+# Check RPC status
+solana cluster-version
+
+# Switch RPC endpoint
+solana config set --url https://api.devnet.solana.com
 ```
 
 ### Support Resources
-- [Anchor Documentation](https://book.anchor-lang.com/)
-- [Solana Documentation](https://docs.solana.com/)
-- [Jupiter API Documentation](https://station.jup.ag/docs/apis/swap-api)
-- [Kamino Documentation](https://docs.kamino.finance/)
 
-## Conclusion
+- **Documentation**: [Anchor Docs](https://www.anchor-lang.com/)
+- **Community**: [Solana Discord](https://discord.gg/solana)
+- **Issues**: Create GitHub issue in project repository
+- **Security**: Contact security@defitrustfund.com for security issues
 
-This deployment guide provides a comprehensive approach to deploying the Jupiter-Kamino Staking Protocol. Always test thoroughly on devnet and testnet before deploying to mainnet, and ensure proper security measures are in place.
+---
 
+## Production Deployment Checklist
+
+### Mainnet Preparation
+
+#### 1. Security Requirements ✅
+- [ ] Third-party security audit completed
+- [ ] Bug bounty program active for 30+ days
+- [ ] Extended testnet operation (6+ weeks)
+- [ ] Incident response procedures documented
+- [ ] Emergency contact list prepared
+
+#### 2. Operational Requirements ✅
+- [ ] Multi-signature wallet setup with trusted parties
+- [ ] Monitoring and alerting systems operational
+- [ ] Legal compliance review completed
+- [ ] Insurance coverage evaluated
+- [ ] Community governance transition plan ready
+
+#### 3. Technical Requirements ✅
+- [ ] Mainnet RPC endpoints configured
+- [ ] Production oracle feeds configured
+- [ ] Frontend optimized and tested
+- [ ] Backup procedures established
+- [ ] Performance benchmarks validated
+
+### Go-Live Process
+
+1. **Final Security Review**: Complete pre-deployment checklist
+2. **Mainnet Deployment**: Deploy contracts with limited TVL cap
+3. **Community Testing**: Allow limited community access
+4. **Gradual Scale-Up**: Increase TVL limits based on performance
+5. **Full Launch**: Remove limits and announce public availability
+
+---
+
+<<<<<<< Current (Your changes)
 For additional support, please refer to the project documentation or create an issue on the GitHub repository.
 
+=======
+**Deployment Support**: For deployment assistance, contact dev@defitrustfund.com
+>>>>>>> Incoming (Background Agent changes)
