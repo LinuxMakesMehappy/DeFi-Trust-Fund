@@ -1,1127 +1,761 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Mint, Token, TokenAccount, MintTo, Burn};
-use spl_token_metadata::instruction::{create_metadata_accounts_v3, CreateMetadataAccountsV3};
-use jupiter_swap_api::{Swap, Quote, JupiterSwapProgram};
+use anchor_spl::token::{self, Mint, Token, TokenAccount, MintTo, Burn, Transfer};
+use anchor_spl::associated_token::AssociatedToken;
+use anchor_spl::metadata::{create_metadata_accounts_v3, CreateMetadataAccountsV3, Metadata};
+use mpl_token_metadata::instruction as mpl_instruction;
 
-declare_id!("YourProgramIdHere1111111111111111111111111111");
+declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
 
 #[program]
 pub mod defi_trust_fund {
     use super::*;
 
+    // ===== EVENTS =====
     #[event]
-    pub struct TierRebalanceEvent {
+    pub struct PoolInitializedEvent {
+        pub admin: Pubkey,
+        pub pool: Pubkey,
+        pub timestamp: i64,
+    }
+
+    #[event]
+    pub struct StakeEvent {
         pub user: Pubkey,
-        pub fund_index: u64,
-        pub new_tier: u8,
-        pub score: u64,
-        pub est_apy: f64,
+        pub amount: u64,
+        pub committed_days: u64,
+        pub fee_amount: u64,
+        pub timestamp: i64,
     }
 
-    #[derive(Accounts)]
-    #[instruction(fund_index: u64)]
-    pub struct InitializeFund<'info> {
-        #[account(mut)]
-        pub admin: Signer<'info>,
-        #[account(
-            init_if_needed,
-            payer = admin,
-            space = 8 + 8,
-            seeds = [b"fund_manager"],
-            bump
-        )]
-        pub fund_manager: Account<'info, FundManager>,
-        #[account(
-            init,
-            payer = admin,
-            space = 8 + 32 + 32 + 8 + 8 + 8,
-            seeds = [b"fund", fund_index.to_le_bytes().as_ref()],
-            bump
-        )]
-        pub fund: Account<'info, Fund>,
-        #[account(
-            init,
-            payer = admin,
-            mint::decimals = 0,
-            mint::authority = admin,
-            seeds = [b"stake_nft_mint", fund_index.to_le_bytes().as_ref()],
-            bump
-        )]
-        pub stake_nft_mint: Account<'info, Mint>,
-        #[account(
-            init,
-            payer = admin,
-            mint::decimals = 0,
-            mint::authority = admin,
-            seeds = [b"tier_nft_mint", fund_index.to_le_bytes().as_ref()],
-            bump
-        )]
-        pub tier_nft_mint: Account<'info, Mint>,
-        #[account(mut)]
-        pub stake_metadata_account: AccountInfo<'info>,
-        #[account(mut)]
-        pub tier_metadata_account: AccountInfo<'info>,
-        #[account(mut)]
-        pub yield_reserve: AccountInfo<'info>,
-        #[account(
-            init,
-            payer = admin,
-            space = 8 + 4 + (32 + 8) * 100,
-            seeds = [b"temp_scores", fund_index.to_le_bytes().as_ref()],
-            bump
-        )]
-        pub temp_scores: Account<'info, TempScores>,
-        pub system_program: Program<'info, System>,
-        pub token_program: Program<'info, Token>,
-        pub token_metadata_program: Program<'info, TokenMetadata>,
-        pub rent: Sysvar<'info, Rent>,
+    #[event]
+    pub struct UnstakeEvent {
+        pub user: Pubkey,
+        pub amount: u64,
+        pub yields: u64,
+        pub penalty: u64,
+        pub timestamp: i64,
     }
 
-    #[derive(Accounts)]
-    #[instruction(fund_index: u64)]
-    pub struct TriggerRebalance<'info> {
-        pub caller: Signer<'info>,
-        #[account(
-            mut,
-            seeds = [b"fund", fund_index.to_le_bytes().as_ref()],
-            bump
-        )]
-        pub fund: Account<'info, Fund>,
+    #[event]
+    pub struct ClaimEvent {
+        pub user: Pubkey,
+        pub yields: u64,
+        pub timestamp: i64,
     }
 
-    #[derive(Accounts)]
-    #[instruction(fund_index: u64, user_keys: Vec<Pubkey>)]
-    pub struct RebalanceTiersBatch<'info> {
-        #[account(mut)]
-        pub admin: Signer<'info>,
-        #[account(
-            mut,
-            seeds = [b"fund", fund_index.to_le_bytes().as_ref()],
-            bump
-        )]
-        pub fund: Account<'info, Fund>,
-        #[account(mut)]
-        pub user_stake: Account<'info, UserStake>,
-        #[account(mut)]
-        pub sentinel_stake_ata: Account<'info, TokenAccount>,
-        #[account(mut)]
-        pub sentinel_tier_ata: Account<'info, TokenAccount>,
-        #[account(mut)]
-        pub stake_nft_mint: Account<'info, Mint>,
-        #[account(mut)]
-        pub tier_nft_mint: Account<'info, Mint>,
-        #[account(mut)]
-        pub tier_metadata_account: AccountInfo<'info>,
-        #[account(mut)]
-        pub temp_scores: Account<'info, TempScores>,
-        pub token_program: Program<'info, Token>,
-        pub token_metadata_program: Program<'info, TokenMetadata>,
-        pub system_program: Program<'info, System>,
-        pub rent: Sysvar<'info, Rent>,
+    #[event]
+    pub struct EmergencyPauseEvent {
+        pub admin: Pubkey,
+        pub reason: String,
+        pub timestamp: i64,
     }
 
-    #[derive(Accounts)]
-    #[instruction(fund_index: u64)]
-    pub struct FinalizeRebalance<'info> {
-        #[account(mut)]
-        pub admin: Signer<'info>,
-        #[account(
-            mut,
-            seeds = [b"fund", fund_index.to_le_bytes().as_ref()],
-            bump
-        )]
-        pub fund: Account<'info, Fund>,
-        #[account(mut)]
-        pub tier_nft_mint: Account<'info, Mint>,
-        #[account(mut)]
-        pub tier_metadata_account: AccountInfo<'info>,
-        #[account(mut)]
-        pub temp_scores: Account<'info, TempScores>,
-        pub system_program: Program<'info, System>,
-        pub token_program: Program<'info, Token>,
-        pub token_metadata_program: Program<'info, TokenMetadata>,
-        pub rent: Sysvar<'info, Rent>,
+    #[event]
+    pub struct EmergencyUnpauseEvent {
+        pub admin: Pubkey,
+        pub timestamp: i64,
     }
 
-    #[derive(Accounts)]
-    #[instruction(fund_index: u64)]
-    pub struct BurnNFT<'info> {
-        #[account(mut)]
-        pub user: Signer<'info>,
-        #[account(
-            mut,
-            seeds = [b"fund", fund_index.to_le_bytes().as_ref()],
-            bump
-        )]
-        pub fund: Account<'info, Fund>,
-        #[account(mut)]
-        pub user_stake: Account<'info, UserStake>,
-        #[account(mut)]
-        pub sentinel_stake_ata: Account<'info, TokenAccount>,
-        #[account(mut)]
-        pub sentinel_tier_ata: Account<'info, TokenAccount>,
-        #[account(mut)]
-        pub stake_nft_mint: Account<'info, Mint>,
-        #[account(mut)]
-        pub tier_nft_mint: Account<'info, Mint>,
-        pub token_program: Program<'info, Token>,
+    #[event]
+    pub struct ParameterUpdateEvent {
+        pub admin: Pubkey,
+        pub parameter: String,
+        pub old_value: u64,
+        pub new_value: u64,
+        pub timestamp: i64,
     }
 
-    #[derive(Accounts)]
-    #[instruction(fund_index: u64, amount: u64, input_mint: Pubkey, committed_days: u64)]
-    pub struct Deposit<'info> {
-        #[account(mut)]
-        pub user: Signer<'info>,
-        #[account(
-            mut,
-            seeds = [b"fund", fund_index.to_le_bytes().as_ref()],
-            bump,
-            constraint = fund.user_count < 100 @ ErrorCode::FundFull
-        )]
-        pub fund: Account<'info, Fund>,
-        #[account(
-            init_if_needed,
-            payer = user,
-            space = 8 + 8 + 8 + 8 + 8 + 1 + 1,  // Updated space for new fields
-            seeds = [b"user_stake", user.key().as_ref(), fund_index.to_le_bytes().as_ref()],
-            bump
-        )]
-        pub user_stake: Account<'info, UserStake>,
-        #[account(mut)]
-        pub sentinel_stake_ata: Account<'info, TokenAccount>,
-        #[account(mut)]
-        pub sentinel_tier_ata: Account<'info, TokenAccount>,
-        #[account(mut)]
-        pub stake_nft_mint: Account<'info, Mint>,
-        #[account(mut)]
-        pub tier_nft_mint: Account<'info, Mint>,
-        #[account(mut)]
-        pub stake_metadata_account: AccountInfo<'info>,
-        #[account(mut)]
-        pub tier_metadata_account: AccountInfo<'info>,
-        #[account(mut)]
-        pub program_vault: AccountInfo<'info>,
-        #[account(mut)]
-        pub program_jsol_ata: Account<'info, TokenAccount>,
-        #[account(mut)]
-        pub input_token_account: AccountInfo<'info, TokenAccount>,
-        #[account(mut)]
-        pub jupiter_stake_pool: AccountInfo<'info>,
-        #[account(mut)]
-        pub kamino_vault: AccountInfo<'info>,
-        #[account(mut)]
-        pub kamino_collateral_ata: AccountInfo<'info, TokenAccount>,
-        #[account(mut)]
-        pub kamino_debt_ata: AccountInfo<'info, TokenAccount>,
-        #[account(mut)]
-        pub pyth_jupsol: AccountInfo<'info>,
-        #[account(mut)]
-        pub yield_reserve: AccountInfo<'info>,
-        pub jupiter_swap_program: Program<'info, JupiterSwapProgram>,
-        pub kamino_program: Program<'info, KaminoProgram>,
-        pub token_program: Program<'info, Token>,
-        pub system_program: Program<'info, System>,
-        pub token_metadata_program: Program<'info, TokenMetadata>,
-        pub rent: Sysvar<'info, Rent>,
-    }
+    // ===== CORE FUNCTIONS =====
 
-    #[derive(Accounts)]
-    #[instruction(fund_index: u64)]
-    pub struct ClaimYields<'info> {
-        #[account(mut)]
-        pub user: Signer<'info>,
-        #[account(
-            mut,
-            seeds = [b"fund", fund_index.to_le_bytes().as_ref()],
-            bump
-        )]
-        pub fund: Account<'info, Fund>,
-        #[account(
-            mut,
-            seeds = [b"user_stake", user.key().as_ref(), fund_index.to_le_bytes().as_ref()],
-            bump
-        )]
-        pub user_stake: Account<'info, UserStake>,
-        #[account(
-            constraint = sentinel_stake_ata.mint == fund.stake_nft_mint && sentinel_stake_ata.amount >= 1 @ ErrorCode::UnauthorizedWallet
-        )]
-        pub sentinel_stake_ata: Account<'info, TokenAccount>,
-        #[account(
-            constraint = sentinel_tier_ata.mint == fund.tier_nft_mint && sentinel_tier_ata.amount >= 1 @ ErrorCode::InvalidTierNFT
-        )]
-        pub sentinel_tier_ata: Account<'info, TokenAccount>,
-        #[account(mut)]
-        pub user_destination: AccountInfo<'info>,
-        #[account(mut)]
-        pub kamino_vault: AccountInfo<'info>,
-        #[account(mut)]
-        pub kamino_collateral_ata: AccountInfo<'info, TokenAccount>,
-        #[account(mut)]
-        pub kamino_debt_ata: AccountInfo<'info, TokenAccount>,
-        #[account(mut)]
-        pub pyth_jupsol: AccountInfo<'info>,
-        #[account(mut)]
-        pub yield_reserve: AccountInfo<'info>,
-        pub kamino_program: Program<'info, KaminoProgram>,
-        pub token_program: Program<'info, Token>,
-        pub system_program: Program<'info, System>,
-    }
+    /// Initialize the staking pool with enhanced security
+    pub fn initialize_pool(
+        ctx: Context<InitializePool>,
+        max_apy: u64,
+        min_commitment_days: u64,
+        max_commitment_days: u64,
+    ) -> Result<()> {
+        // Validate input parameters
+        require!(max_apy <= 5000, ErrorCode::InvalidApy); // Max 50% APY
+        require!(min_commitment_days >= 1, ErrorCode::InvalidCommitment);
+        require!(max_commitment_days <= 365, ErrorCode::InvalidCommitment);
+        require!(min_commitment_days <= max_commitment_days, ErrorCode::InvalidCommitment);
 
-    #[derive(Accounts)]
-    pub struct FindOpenFund<'info> {
-        #[account(seeds = [b"fund_manager"], bump)]
-        pub fund_manager: Account<'info, FundManager>,
-    }
+        let pool = &mut ctx.accounts.pool;
+        let clock = Clock::get()?;
 
-    #[derive(Accounts)]
-    #[instruction(fund_index: u64, auto_reinvest_percentage: u8)]
-    pub struct SetAutoReinvest<'info> {
-        #[account(mut)]
-        pub user: Signer<'info>,
-        #[account(
-            mut,
-            seeds = [b"user_stake", user.key().as_ref(), fund_index.to_le_bytes().as_ref()],
-            bump
-        )]
-        pub user_stake: Account<'info, UserStake>,
-        #[account(
-            constraint = sentinel_stake_ata.mint == fund.stake_nft_mint && sentinel_stake_ata.amount >= 1 @ ErrorCode::UnauthorizedWallet
-        )]
-        pub sentinel_stake_ata: Account<'info, TokenAccount>,
-        #[account(
-            constraint = sentinel_tier_ata.mint == fund.tier_nft_mint && sentinel_tier_ata.amount >= 1 @ ErrorCode::InvalidTierNFT
-        )]
-        pub sentinel_tier_ata: Account<'info, TokenAccount>,
-        #[account(
-            seeds = [b"fund", fund_index.to_le_bytes().as_ref()],
-            bump
-        )]
-        pub fund: Account<'info, Fund>,
-    }
+        // Initialize pool with security parameters
+        pool.admin = ctx.accounts.admin.key();
+        pool.total_staked = 0;
+        pool.total_users = 0;
+        pool.apy = 1200; // 12% APY in basis points
+        pool.deposit_fee = 50; // 0.5% fee in basis points
+        pool.max_apy = max_apy;
+        pool.min_commitment_days = min_commitment_days;
+        pool.max_commitment_days = max_commitment_days;
+        pool.is_active = true;
+        pool.is_paused = false;
+        pool.emergency_pause_reason = "".to_string();
+        pool.total_fees_collected = 0;
+        pool.total_yields_paid = 0;
+        pool.last_rebalance_timestamp = clock.unix_timestamp;
+        pool.created_at = clock.unix_timestamp;
+        pool.updated_at = clock.unix_timestamp;
 
-    #[derive(Accounts)]
-    #[instruction(fund_index: u64)]
-    pub struct DepositYieldReserve<'info> {
-        #[account(mut)]
-        pub admin: Signer<'info>,
-        #[account(
-            mut,
-            seeds = [b"fund", fund_index.to_le_bytes().as_ref()],
-            bump
-        )]
-        pub fund: Account<'info, Fund>,
-        #[account(mut)]
-        pub yield_reserve: AccountInfo<'info>,
-        #[account(mut)]
-        pub program_jsol_ata: AccountInfo<'info, TokenAccount>,
-        #[account(mut)]
-        pub jupiter_stake_pool: AccountInfo<'info>,
-        #[account(mut)]
-        pub kamino_vault: AccountInfo<'info>,
-        #[account(mut)]
-        pub kamino_collateral_ata: AccountInfo<'info, TokenAccount>,
-        #[account(mut)]
-        pub kamino_debt_ata: AccountInfo<'info, TokenAccount>,
-        pub jupiter_swap_program: Program<'info, JupiterSwapProgram>,
-        pub kamino_program: Program<'info, KaminoProgram>,
-        pub token_program: Program<'info, Token>,
-        pub system_program: Program<'info, System>,
-    }
-
-    #[derive(Accounts)]
-    #[instruction(fund_index: u64)]
-    pub struct GetUserInfo<'info> {
-        pub user: Signer<'info>,
-        #[account(
-            seeds = [b"fund", fund_index.to_le_bytes().as_ref()],
-            bump
-        )]
-        pub fund: Account<'info, Fund>,
-        #[account(
-            seeds = [b"user_stake", user.key().as_ref(), fund_index.to_le_bytes().as_ref()],
-            bump
-        )]
-        pub user_stake: Account<'info, UserStake>,
-        #[account(
-            constraint = sentinel_stake_ata.mint == fund.stake_nft_mint
-        )]
-        pub sentinel_stake_ata: Account<'info, TokenAccount>,
-        #[account(
-            constraint = sentinel_tier_ata.mint == fund.tier_nft_mint
-        )]
-        pub sentinel_tier_ata: Account<'info, TokenAccount>,
-    }
-
-    pub fn initialize_fund(ctx: Context<InitializeFund>, fund_index: u64) -> Result<()> {
-        if fund_index == 0 {
-            ctx.accounts.fund_manager.fund_count = 1;
-        } else {
-            let fund_manager = &mut ctx.accounts.fund_manager;
-            fund_manager.fund_count = fund_manager.fund_count.checked_add(1).ok_or(ErrorCode::ArithmeticOverflow)?;
-        }
-        let fund = &mut ctx.accounts.fund;
-        fund.stake_nft_mint = ctx.accounts.stake_nft_mint.key();
-        fund.tier_nft_mint = ctx.accounts.tier_nft_mint.key();
-        fund.total_deposits = 0;
-        fund.user_count = 0;
-        fund.last_rebalance_timestamp = Clock::get()?.unix_timestamp as u64;
-
-        // Create metadata for Stake NFT
-        let cpi_program = ctx.accounts.token_metadata_program.to_account_info();
-        let cpi_accounts = CreateMetadataAccountsV3 {
-            metadata: ctx.accounts.stake_metadata_account.to_account_info(),
-            mint: ctx.accounts.stake_nft_mint.to_account_info(),
-            mint_authority: ctx.accounts.admin.to_account_info(),
-            payer: ctx.accounts.admin.to_account_info(),
-            update_authority: ctx.accounts.admin.to_account_info(),
-            system_program: ctx.accounts.system_program.to_account_info(),
-            rent: ctx.accounts.rent.to_account_info(),
-        };
-        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-        create_metadata_accounts_v3(
-            cpi_ctx,
-            format!("Fund {} Stake Pass", fund_index),
-            format!("F{}SP", fund_index),
-            "Soulbound stake pass".to_string(),
-            true,
-            None,
-            Some(spl_token_metadata::state::TokenStandard::NonFungible),
-        )?;
-
-        // Create metadata for Tier NFT (default Tier 1)
-        let cpi_accounts = CreateMetadataAccountsV3 {
-            metadata: ctx.accounts.tier_metadata_account.to_account_info(),
-            mint: ctx.accounts.tier_nft_mint.to_account_info(),
-            mint_authority: ctx.accounts.admin.to_account_info(),
-            payer: ctx.accounts.admin.to_account_info(),
-            update_authority: ctx.accounts.admin.to_account_info(),
-            system_program: ctx.accounts.system_program.to_account_info(),
-            rent: ctx.accounts.rent.to_account_info(),
-        };
-        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-        create_metadata_accounts_v3(
-            cpi_ctx,
-            format!("Fund {} Tier 1 Badge", fund_index),
-            format!("F{}T1", fund_index),
-            "Soulbound tier 1 badge".to_string(),
-            true,
-            None,
-            Some(spl_token_metadata::state::TokenStandard::NonFungible),
-        )?;
-
+        // Initialize security parameters
+        pool.max_deposit_per_user = 1000 * LAMPORTS_PER_SOL; // 1000 SOL max per user
+        pool.max_total_staked = 100000 * LAMPORTS_PER_SOL; // 100k SOL max total
+        pool.min_stake_amount = 0.1 * LAMPORTS_PER_SOL; // 0.1 SOL minimum
+        pool.max_stake_amount = 100 * LAMPORTS_PER_SOL; // 100 SOL max per stake
+        
+        emit!(PoolInitializedEvent {
+            admin: ctx.accounts.admin.key(),
+            pool: pool.key(),
+            timestamp: clock.unix_timestamp,
+        });
+        
         Ok(())
     }
 
-    pub fn trigger_rebalance(ctx: Context<TriggerRebalance>, fund_index: u64) -> Result<()> {
-        let fund = &mut ctx.accounts.fund;
-        let current_time = Clock::get()?.unix_timestamp as u64;
-        let month_seconds = 30 * 24 * 3600;
-        require!(current_time >= fund.last_rebalance_timestamp.checked_add(month_seconds).ok_or(ErrorCode::ArithmeticOverflow)?, ErrorCode::RebalanceNotDue);
-        fund.last_rebalance_timestamp = current_time;
-        Ok(())
-    }
-
-    pub fn rebalance_tiers_batch(ctx: Context<RebalanceTiersBatch>, fund_index: u64, user_keys: Vec<Pubkey>) -> Result<()> {
-        require!(user_keys.len() <= 25, ErrorCode::InvalidBatchSize);
-        let fund = &mut ctx.accounts.fund;
-        let current_time = Clock::get()?.unix_timestamp as u64;
-        let day_seconds = 24 * 3600;
-
-        for (i, user_key) in user_keys.iter().enumerate() {
-            let user_stake = &mut ctx.accounts.user_stake;
-            
-            // Calculate current period days (floored)
-            let current_period_seconds = current_time.checked_sub(user_stake.stake_timestamp).ok_or(ErrorCode::ArithmeticOverflow)?;
-            let current_period_days = current_period_seconds / day_seconds;
-            
-            // Total days including lifetime history
-            let total_days = current_period_days.checked_add(user_stake.lifetime_staked_days).ok_or(ErrorCode::ArithmeticOverflow)?;
-
-            // Loyalty multiplier: 1.0 + (total_days / 365.0) * 0.2 (max 2x after 5 years)
-            let years_staked = total_days as f64 / 365.0;
-            let loyalty_multiplier = 1.0 + (years_staked * 0.2).min(1.0); // Cap at 2x
-
-            // Base score: 5 * deposit_amount + 5 * total_days (including lifetime)
-            let base_score = 5 * user_stake.deposit_amount + 5 * total_days;
-            
-            // Apply loyalty multiplier
-            let score = (base_score as f64 * loyalty_multiplier) as u64;
-
-            // Store score in TempScores
-            let temp_scores = &mut ctx.accounts.temp_scores;
-            temp_scores.scores[i] = TempScore {
-                user: *user_key,
-                score,
-            };
-
-            // Burn for inactivity (score < 6)
-            if score < 6 {
-                let cpi_accounts = Burn {
-                    mint: ctx.accounts.stake_nft_mint.to_account_info(),
-                    from: ctx.accounts.sentinel_stake_ata.to_account_info(),
-                    authority: ctx.accounts.sentinel_stake_ata.to_account_info(),
-                };
-                let cpi_program = ctx.accounts.token_program.to_account_info();
-                token::burn(CpiContext::new(cpi_program, cpi_accounts), 1)?;
-
-                let cpi_accounts = Burn {
-                    mint: ctx.accounts.tier_nft_mint.to_account_info(),
-                    from: ctx.accounts.sentinel_tier_ata.to_account_info(),
-                    authority: ctx.accounts.sentinel_tier_ata.to_account_info(),
-                };
-                let cpi_program = ctx.accounts.token_program.to_account_info();
-                token::burn(CpiContext::new(cpi_program, cpi_accounts), 1)?;
-
-                user_stake.deposit_amount = 0;
-                user_stake.tier = 0;
-                fund.user_count = fund.user_count.checked_sub(1).ok_or(ErrorCode::ArithmeticOverflow)?;
-                continue;
-            }
-        }
-
-        Ok(())
-    }
-
-    pub fn finalize_rebalance(ctx: Context<FinalizeRebalance>, fund_index: u64) -> Result<()> {
-        let fund = &mut ctx.accounts.fund;
-        let temp_scores = &mut ctx.accounts.temp_scores;
-
-        // Simple bubble sort for scores (100 users, ~200K compute units)
-        for i in 0..temp_scores.scores.len() {
-            for j in 0..temp_scores.scores.len() - i - 1 {
-                if temp_scores.scores[j].score < temp_scores.scores[j + 1].score {
-                    let temp = temp_scores.scores[j];
-                    temp_scores.scores[j] = temp_scores.scores[j + 1];
-                    temp_scores.scores[j + 1] = temp;
-                }
-            }
-        }
-
-        // Assign tiers: top 10 -> Tier 3, next 20 -> Tier 2, rest -> Tier 1
-        for (i, temp_score) in temp_scores.scores.iter().enumerate() {
-            let tier = if i < 10 { 3 } else if i < 30 { 2 } else { 1 };
-            
-            // Update Tier NFT metadata for the new tier
-            let cpi_program = ctx.accounts.token_metadata_program.to_account_info();
-            let cpi_accounts = CreateMetadataAccountsV3 {
-                metadata: ctx.accounts.tier_metadata_account.to_account_info(),
-                mint: ctx.accounts.tier_nft_mint.to_account_info(),
-                mint_authority: ctx.accounts.admin.to_account_info(),
-                payer: ctx.accounts.admin.to_account_info(),
-                update_authority: ctx.accounts.admin.to_account_info(),
-                system_program: ctx.accounts.system_program.to_account_info(),
-                rent: ctx.accounts.rent.to_account_info(),
-            };
-            let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-            create_metadata_accounts_v3(
-                cpi_ctx,
-                format!("Fund {} Tier {} Badge", fund_index, tier),
-                format!("F{}T{}", fund_index, tier),
-                format!("Soulbound tier {} badge - Score: {}, Est APY: {}%", tier, temp_score.score, get_est_apy(tier)).to_string(),
-                true,
-                None,
-                Some(spl_token_metadata::state::TokenStandard::NonFungible),
-            )?;
-
-            // Emit event
-            emit!(TierRebalanceEvent {
-                user: temp_score.user,
-                fund_index,
-                new_tier: tier,
-                score: temp_score.score,
-                est_apy: get_est_apy(tier),
-            });
-        }
-
-        // Clear temp_scores
-        temp_scores.scores.clear();
-
-        Ok(())
-    }
-
-    pub fn burn_nft(ctx: Context<BurnNFT>, fund_index: u64) -> Result<()> {
-        let fund = &ctx.accounts.fund;
+    /// Stake SOL with comprehensive security checks
+    pub fn stake(
+        ctx: Context<Stake>,
+        amount: u64,
+        committed_days: u64,
+    ) -> Result<()> {
+        let pool = &mut ctx.accounts.pool;
         let user_stake = &mut ctx.accounts.user_stake;
+        let clock = Clock::get()?;
+
+        // Security checks
+        require!(!pool.is_paused, ErrorCode::PoolPaused);
+        require!(pool.is_active, ErrorCode::PoolInactive);
+        require!(amount >= pool.min_stake_amount, ErrorCode::AmountTooSmall);
+        require!(amount <= pool.max_stake_amount, ErrorCode::AmountTooLarge);
+        require!(committed_days >= pool.min_commitment_days, ErrorCode::InvalidCommitment);
+        require!(committed_days <= pool.max_commitment_days, ErrorCode::InvalidCommitment);
         
-        // Calculate floored days and partial seconds
-        let current_time = Clock::get()?.unix_timestamp as u64;
-        let total_seconds = current_time.checked_sub(user_stake.stake_timestamp).ok_or(ErrorCode::ArithmeticOverflow)?;
-        let days_staked = total_seconds / 86400;  // Floor to full days
-        let partial_seconds = total_seconds % 86400;  // Remainder hours
+        // Check user limits
+        let new_total_user_stake = user_stake.amount.checked_add(amount)
+            .ok_or(ErrorCode::ArithmeticOverflow)?;
+        require!(new_total_user_stake <= pool.max_deposit_per_user, ErrorCode::UserLimitExceeded);
         
-        // Update lifetime history with full days only
-        user_stake.lifetime_staked_days = user_stake.lifetime_staked_days.checked_add(days_staked).ok_or(ErrorCode::ArithmeticOverflow)?;
+        // Check pool limits
+        let new_total_pool_stake = pool.total_staked.checked_add(amount)
+            .ok_or(ErrorCode::ArithmeticOverflow)?;
+        require!(new_total_pool_stake <= pool.max_total_staked, ErrorCode::PoolLimitExceeded);
+
+        // Calculate fee with overflow protection
+        let fee_amount = amount
+            .checked_mul(pool.deposit_fee)
+            .ok_or(ErrorCode::ArithmeticOverflow)?
+            .checked_div(10000)
+            .ok_or(ErrorCode::ArithmeticOverflow)?;
         
-        // Calculate base yields (prorated on full days only)
-        let apy = get_est_apy(user_stake.tier) / 100.0;
-        let total_days = days_staked.checked_add(user_stake.lifetime_staked_days).ok_or(ErrorCode::ArithmeticOverflow)?;
-        let multiplier = 1.0 + ((total_days as f64 / 365.0) * 0.2).min(1.0);
-        let full_day_yields = (user_stake.deposit_amount as f64 * apy * (days_staked as f64 / 365.0) * multiplier) as u64;
+        let net_amount = amount.checked_sub(fee_amount)
+            .ok_or(ErrorCode::ArithmeticOverflow)?;
+
+        let is_new_user = user_stake.amount == 0;
         
-        // Determine liquidation amount based on commitment penalty
-        let liquidation_amount: u64;
-        if days_staked < user_stake.committed_days || partial_seconds > 0 {
-            // Penalty: Zero partial/incomplete day rewards
-            // If mid-day (e.g., 23 hours), treat as days_staked - 0 for last day
-            liquidation_amount = user_stake.deposit_amount;
-            
-            // For strict penalty on incomplete commitment: if days_staked < committed, set yields = 0
-            if days_staked < user_stake.committed_days {
-                liquidation_amount = user_stake.deposit_amount;  // No yields, only principal
-            }
-        } else {
-            // Full commitment completed: get principal + yields
-            liquidation_amount = user_stake.deposit_amount.checked_add(full_day_yields).ok_or(ErrorCode::ArithmeticOverflow)?;
-        }
-
-        // Burn Stake NFT
-        if ctx.accounts.sentinel_stake_ata.amount >= 1 && ctx.accounts.sentinel_stake_ata.mint == fund.stake_nft_mint {
-            let cpi_accounts = Burn {
-                mint: ctx.accounts.stake_nft_mint.to_account_info(),
-                from: ctx.accounts.sentinel_stake_ata.to_account_info(),
-                authority: ctx.accounts.sentinel_stake_ata.to_account_info(),
-            };
-            let cpi_program = ctx.accounts.token_program.to_account_info();
-            token::burn(CpiContext::new(cpi_program, cpi_accounts), 1)?;
-            user_stake.deposit_amount = 0;
-            fund.user_count = fund.user_count.checked_sub(1).ok_or(ErrorCode::ArithmeticOverflow)?;
-        }
-
-        // Burn Tier NFT
-        if ctx.accounts.sentinel_tier_ata.amount >= 1 && ctx.accounts.sentinel_tier_ata.mint == fund.tier_nft_mint {
-            let cpi_accounts = Burn {
-                mint: ctx.accounts.tier_nft_mint.to_account_info(),
-                from: ctx.accounts.sentinel_tier_ata.to_account_info(),
-                authority: ctx.accounts.sentinel_tier_ata.to_account_info(),
-            };
-            let cpi_program = ctx.accounts.token_program.to_account_info();
-            token::burn(CpiContext::new(cpi_program, cpi_accounts), 1)?;
-            user_stake.tier = 0;
-        }
-
-        // Transfer liquidation amount to user
-        // Note: This would require adding user destination account to the struct
-        // For now, we'll just update the state
-
-        Ok(())
-    }
-
-    pub fn deposit(ctx: Context<Deposit>, fund_index: u64, amount: u64, input_mint: Pubkey, committed_days: u64) -> Result<()> {
-        require!(committed_days >= 1, ErrorCode::InvalidCommitment);
+        // Update user stake
+        user_stake.user = ctx.accounts.user.key();
+        user_stake.amount = user_stake.amount.checked_add(net_amount)
+            .ok_or(ErrorCode::ArithmeticOverflow)?;
+        user_stake.committed_days = committed_days;
+        user_stake.stake_timestamp = clock.unix_timestamp;
+        user_stake.last_claim_timestamp = clock.unix_timestamp;
+        user_stake.total_staked_lifetime = user_stake.total_staked_lifetime
+            .checked_add(net_amount)
+            .ok_or(ErrorCode::ArithmeticOverflow)?;
+        user_stake.total_days_staked = user_stake.total_days_staked
+            .checked_add(committed_days)
+            .ok_or(ErrorCode::ArithmeticOverflow)?;
         
-        let fund = &mut ctx.accounts.fund;
-        let is_first_deposit = ctx.accounts.user_stake.deposit_amount == 0;
-
-        if is_first_deposit {
-            require_lt!(fund.user_count, 100, ErrorCode::FundFull);
-            fund.user_count = fund.user_count.checked_add(1).ok_or(ErrorCode::ArithmeticOverflow)?;
-        } else {
-            require!(ctx.accounts.sentinel_stake_ata.amount >= 1 && ctx.accounts.sentinel_stake_ata.mint == fund.stake_nft_mint, ErrorCode::UnauthorizedWallet);
-            require!(ctx.accounts.sentinel_tier_ata.amount >= 1 && ctx.accounts.sentinel_tier_ata.mint == fund.tier_nft_mint, ErrorCode::InvalidTierNFT);
+        // Update pool
+        pool.total_staked = pool.total_staked.checked_add(net_amount)
+            .ok_or(ErrorCode::ArithmeticOverflow)?;
+        pool.total_fees_collected = pool.total_fees_collected
+            .checked_add(fee_amount)
+            .ok_or(ErrorCode::ArithmeticOverflow)?;
+        
+        if is_new_user {
+            pool.total_users = pool.total_users.checked_add(1)
+                .ok_or(ErrorCode::ArithmeticOverflow)?;
         }
+        
+        pool.updated_at = clock.unix_timestamp;
 
-        require_gt!(amount, 0, ErrorCode::ZeroAmount);
-
-        // Calculate fee (0.5%)
-        let fee_percentage = 0.005;
-        let fee_amount = (amount as f64 * fee_percentage) as u64;
-        let deposit_amount = amount.checked_sub(fee_amount).ok_or(ErrorCode::ArithmeticOverflow)?;
-
-        // Swap to SOL
-        let is_sol = input_mint == Pubkey::default();
-        let sol_amount = if !is_sol {
-            let quote = jupiter_swap_api::get_quote(
-                input_mint,
-                Pubkey::default(),
-                deposit_amount,
-                0.01,
-            )?;
-            require!(quote.output_amount >= deposit_amount.checked_div(100).ok_or(ErrorCode::ArithmeticOverflow)?, ErrorCode::HighSlippage);
-            let swap_ix = jupiter_swap_api::swap(
-                &ctx.accounts.jupiter_swap_program.key(),
-                &ctx.accounts.input_token_account.key(),
-                &ctx.accounts.program_vault.key(),
-                &quote.route,
-                deposit_amount,
-                &ctx.accounts.user.key(),
-                &ctx.accounts.token_program.key(),
-            )?;
-            invoke(
-                &swap_ix,
-                &[
-                    ctx.accounts.input_token_account.to_account_info(),
-                    ctx.accounts.program_vault.clone(),
-                    ctx.accounts.jupiter_swap_program.to_account_info(),
-                    ctx.accounts.token_program.to_account_info(),
-                    ctx.accounts.user.to_account_info(),
-                ],
-            )?;
-            quote.output_amount
-        } else {
-            let transfer_ix = system_instruction::transfer(
-                &ctx.accounts.user.key(),
-                &ctx.accounts.program_vault.key(),
-                deposit_amount,
-            );
-            invoke(
-                &transfer_ix,
-                &[
-                    ctx.accounts.user.to_account_info(),
-                    ctx.accounts.program_vault.clone(),
-                    ctx.accounts.system_program.to_account_info(),
-                ],
-            )?;
-            deposit_amount
-        };
-
-        // Transfer fee to yield_reserve
-        if fee_amount > 0 {
-            let fee_transfer_ix = system_instruction::transfer(
-                &ctx.accounts.user.key(),
-                &ctx.accounts.yield_reserve.key(),
-                fee_amount,
-            );
-            invoke(
-                &fee_transfer_ix,
-                &[
-                    ctx.accounts.user.to_account_info(),
-                    ctx.accounts.yield_reserve.clone(),
-                    ctx.accounts.system_program.to_account_info(),
-                ],
-            )?;
-        }
-
-        // Stake to JupSOL
-        let stake_ix = jupiter_swap_api::stake_sol_to_jsol(
-            &ctx.accounts.jupiter_stake_pool.key(),
-            &ctx.accounts.program_vault.key(),
-            &ctx.accounts.program_jsol_ata.key(),
-            sol_amount,
-            &ctx.accounts.token_program.key(),
-        )?;
-        invoke(
-            &stake_ix,
+        // Transfer SOL to pool vault
+        let transfer_ix = anchor_lang::solana_program::system_instruction::transfer(
+            &ctx.accounts.user.key(),
+            &ctx.accounts.pool_vault.key(),
+            amount,
+        );
+        
+        anchor_lang::solana_program::program::invoke(
+            &transfer_ix,
             &[
-                ctx.accounts.jupiter_stake_pool.clone(),
-                ctx.accounts.program_vault.clone(),
-                ctx.accounts.program_jsol_ata.to_account_info(),
-                ctx.accounts.token_program.to_account_info(),
+                ctx.accounts.user.to_account_info(),
+                ctx.accounts.pool_vault.clone(),
+                ctx.accounts.system_program.to_account_info(),
             ],
         )?;
+        
+        emit!(StakeEvent {
+            user: ctx.accounts.user.key(),
+            amount: net_amount,
+            committed_days,
+            fee_amount,
+            timestamp: clock.unix_timestamp,
+        });
+        
+        Ok(())
+    }
 
-        // Deposit to Kamino
-        let kamino_deposit_ix = kamino::deposit_to_multiply_vault(
-            &ctx.accounts.kamino_program.key(),
-            &ctx.accounts.program_jsol_ata.key(),
-            &ctx.accounts.kamino_vault.key(),
-            &ctx.accounts.kamino_collateral_ata.key(),
-            &ctx.accounts.kamino_debt_ata.key(),
-            sol_amount,
-            4.6,
-            &ctx.accounts.token_program.key(),
-        )?;
-        invoke(
-            &kamino_deposit_ix,
+    /// Claim yields with security validations
+    pub fn claim_yields(ctx: Context<ClaimYields>) -> Result<()> {
+        let user_stake = &mut ctx.accounts.user_stake;
+        let pool = &mut ctx.accounts.pool;
+        let clock = Clock::get()?;
+
+        // Security checks
+        require!(!pool.is_paused, ErrorCode::PoolPaused);
+        require!(pool.is_active, ErrorCode::PoolInactive);
+        require!(user_stake.amount > 0, ErrorCode::NoStake);
+        
+        let current_time = clock.unix_timestamp;
+        let time_staked = current_time.checked_sub(user_stake.stake_timestamp)
+            .ok_or(ErrorCode::ArithmeticOverflow)?;
+        let days_staked = time_staked.checked_div(86400)
+            .ok_or(ErrorCode::ArithmeticOverflow)?;
+        
+        require!(days_staked >= user_stake.committed_days, ErrorCode::CommitmentNotMet);
+        
+        // Calculate yields with overflow protection
+        let apy_decimal = pool.apy as f64 / 10000.0;
+        let yields = (user_stake.amount as f64 * apy_decimal * (days_staked as f64 / 365.0)) as u64;
+        
+        require!(yields > 0, ErrorCode::NoYieldsToClaim);
+        
+        // Check if pool has sufficient funds
+        require!(yields <= ctx.accounts.pool_vault.lamports(), ErrorCode::InsufficientFunds);
+        
+        // Update user stake
+        user_stake.last_claim_timestamp = current_time;
+        user_stake.total_yields_claimed = user_stake.total_yields_claimed
+            .checked_add(yields)
+            .ok_or(ErrorCode::ArithmeticOverflow)?;
+        
+        // Update pool
+        pool.total_yields_paid = pool.total_yields_paid
+            .checked_add(yields)
+            .ok_or(ErrorCode::ArithmeticOverflow)?;
+        pool.updated_at = current_time;
+        
+        // Transfer yields to user
+        let transfer_ix = anchor_lang::solana_program::system_instruction::transfer(
+            &ctx.accounts.pool_vault.key(),
+            &ctx.accounts.user.key(),
+            yields,
+        );
+        
+        anchor_lang::solana_program::program::invoke_signed(
+            &transfer_ix,
             &[
-                ctx.accounts.program_jsol_ata.to_account_info(),
-                ctx.accounts.kamino_vault.clone(),
-                ctx.accounts.kamino_collateral_ata.to_account_info(),
-                ctx.accounts.kamino_debt_ata.to_account_info(),
-                ctx.accounts.kamino_program.to_account_info(),
-                ctx.accounts.token_program.to_account_info(),
+                ctx.accounts.pool_vault.clone(),
+                ctx.accounts.user.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
             ],
+            &[&[b"pool_vault", &[ctx.bumps.pool_vault]]],
         )?;
+        
+        emit!(ClaimEvent {
+            user: ctx.accounts.user.key(),
+            yields,
+            timestamp: current_time,
+        });
+        
+        Ok(())
+    }
 
-        // Mint NFTs and deposit to sentinel ATA
-        if is_first_deposit {
-            let cpi_accounts = MintTo {
-                mint: ctx.accounts.stake_nft_mint.to_account_info(),
-                to: ctx.accounts.sentinel_stake_ata.to_account_info(),
-                authority: ctx.accounts.admin.to_account_info(),
-            };
-            let cpi_program = ctx.accounts.token_program.to_account_info();
-            token::mint_to(CpiContext::new(cpi_program, cpi_accounts), 1)?;
-
-            let cpi_accounts = MintTo {
-                mint: ctx.accounts.tier_nft_mint.to_account_info(),
-                to: ctx.accounts.sentinel_tier_ata.to_account_info(),
-                authority: ctx.accounts.admin.to_account_info(),
-            };
-            let cpi_program = ctx.accounts.token_program.to_account_info();
-            token::mint_to(CpiContext::new(cpi_program, cpi_accounts), 1)?;
-        }
-
-        // Record stake with new fields
+    /// Unstake with penalty calculation
+    pub fn unstake(ctx: Context<Unstake>) -> Result<()> {
         let user_stake = &mut ctx.accounts.user_stake;
-        user_stake.deposit_amount = user_stake.deposit_amount.checked_add(sol_amount).ok_or(ErrorCode::ArithmeticOverflow)?;
-        if user_stake.stake_timestamp == 0 {
-            user_stake.stake_timestamp = Clock::get()?.unix_timestamp as u64;
-            user_stake.tier = 1;
-            user_stake.auto_reinvest_percentage = 20; // Default 20%
-            user_stake.committed_days = committed_days; // Set committed days
-            user_stake.lifetime_staked_days = 0; // Initialize lifetime days
+        let pool = &mut ctx.accounts.pool;
+        let clock = Clock::get()?;
+
+        // Security checks
+        require!(!pool.is_paused, ErrorCode::PoolPaused);
+        require!(user_stake.amount > 0, ErrorCode::NoStake);
+        
+        let current_time = clock.unix_timestamp;
+        let time_staked = current_time.checked_sub(user_stake.stake_timestamp)
+            .ok_or(ErrorCode::ArithmeticOverflow)?;
+        let days_staked = time_staked.checked_div(86400)
+            .ok_or(ErrorCode::ArithmeticOverflow)?;
+        
+        let mut return_amount = user_stake.amount;
+        let mut yields = 0;
+        let mut penalty = 0;
+        
+        // Calculate yields and penalties
+        if days_staked >= user_stake.committed_days {
+            // Full commitment met - calculate yields
+            let apy_decimal = pool.apy as f64 / 10000.0;
+            yields = (user_stake.amount as f64 * apy_decimal * (days_staked as f64 / 365.0)) as u64;
+            return_amount = return_amount.checked_add(yields)
+                .ok_or(ErrorCode::ArithmeticOverflow)?;
+        } else {
+            // Early exit - apply penalty
+            penalty = user_stake.amount.checked_mul(500).ok_or(ErrorCode::ArithmeticOverflow)?
+                .checked_div(10000).ok_or(ErrorCode::ArithmeticOverflow)?; // 5% penalty
+            return_amount = return_amount.checked_sub(penalty)
+                .ok_or(ErrorCode::ArithmeticOverflow)?;
         }
-        let fund = &mut ctx.accounts.fund;
-        fund.total_deposits = fund.total_deposits.checked_add(sol_amount).ok_or(ErrorCode::ArithmeticOverflow)?;
-
-
-
-        // Reinvest fee
-        if fee_amount > 0 {
-            let fee_stake_ix = jupiter_swap_api::stake_sol_to_jsol(
-                &ctx.accounts.jupiter_stake_pool.key(),
-                &ctx.accounts.yield_reserve.key(),
-                &ctx.accounts.program_jsol_ata.key(),
-                fee_amount,
-                &ctx.accounts.token_program.key(),
-            )?;
-            invoke(
-                &fee_stake_ix,
-                &[
-                    ctx.accounts.jupiter_stake_pool.clone(),
-                    ctx.accounts.yield_reserve.clone(),
-                    &ctx.accounts.program_jsol_ata.to_account_info(),
-                    ctx.accounts.token_program.to_account_info(),
-                ],
-            )?;
-
-            let fee_deposit_ix = kamino::deposit_to_multiply_vault(
-                &ctx.accounts.kamino_program.key(),
-                &ctx.accounts.program_jsol_ata.key(),
-                &ctx.accounts.kamino_vault.key(),
-                &ctx.accounts.kamino_collateral_ata.key(),
-                &ctx.accounts.kamino_debt_ata.key(),
-                fee_amount,
-                4.6,
-                &ctx.accounts.token_program.key(),
-            )?;
-            invoke(
-                &fee_deposit_ix,
-                &[
-                    ctx.accounts.program_jsol_ata.to_account_info(),
-                    ctx.accounts.kamino_vault.clone(),
-                    ctx.accounts.kamino_collateral_ata.to_account_info(),
-                    ctx.accounts.kamino_debt_ata.to_account_info(),
-                    ctx.accounts.kamino_program.to_account_info(),
-                    ctx.accounts.token_program.to_account_info(),
-                ],
-            )?;
-
-            fund.total_deposits = fund.total_deposits.checked_add(fee_amount).ok_or(ErrorCode::ArithmeticOverflow)?;
-        }
-
+        
+        // Check if pool has sufficient funds
+        require!(return_amount <= ctx.accounts.pool_vault.lamports(), ErrorCode::InsufficientFunds);
+        
+        // Update pool
+        pool.total_staked = pool.total_staked.checked_sub(user_stake.amount)
+            .ok_or(ErrorCode::ArithmeticOverflow)?;
+        pool.total_users = pool.total_users.checked_sub(1)
+            .ok_or(ErrorCode::ArithmeticOverflow)?;
+        pool.updated_at = current_time;
+        
+        // Reset user stake
+        user_stake.amount = 0;
+        user_stake.committed_days = 0;
+        user_stake.stake_timestamp = 0;
+        user_stake.last_claim_timestamp = 0;
+        
+        // Transfer funds to user
+        let transfer_ix = anchor_lang::solana_program::system_instruction::transfer(
+            &ctx.accounts.pool_vault.key(),
+            &ctx.accounts.user.key(),
+            return_amount,
+        );
+        
+        anchor_lang::solana_program::program::invoke_signed(
+            &transfer_ix,
+            &[
+                ctx.accounts.pool_vault.clone(),
+                ctx.accounts.user.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+            ],
+            &[&[b"pool_vault", &[ctx.bumps.pool_vault]]],
+        )?;
+        
+        emit!(UnstakeEvent {
+            user: ctx.accounts.user.key(),
+            amount: user_stake.amount,
+            yields,
+            penalty,
+            timestamp: current_time,
+        });
+        
         Ok(())
     }
 
-    pub fn claim_yields(ctx: Context<ClaimYields>, fund_index: u64) -> Result<()> {
-        require!(ctx.accounts.sentinel_stake_ata.amount >= 1 && ctx.accounts.sentinel_stake_ata.mint == ctx.accounts.fund.stake_nft_mint, ErrorCode::UnauthorizedWallet);
-        require!(ctx.accounts.sentinel_tier_ata.amount >= 1 && ctx.accounts.sentinel_tier_ata.mint == ctx.accounts.fund.tier_nft_mint, ErrorCode::InvalidTierNFT);
-        let user_stake = &mut ctx.accounts.user_stake;
-        require_gt!(user_stake.deposit_amount, 0, ErrorCode::NoDeposit);
+    // ===== ADMIN FUNCTIONS =====
 
-        let current_time = Clock::get()?.unix_timestamp as u64;
+    /// Emergency pause function
+    pub fn emergency_pause(ctx: Context<AdminOnly>, reason: String) -> Result<()> {
+        let pool = &mut ctx.accounts.pool;
+        let clock = Clock::get()?;
         
-        // Calculate floored days for yield calculation
-        let total_seconds = current_time.checked_sub(user_stake.stake_timestamp).ok_or(ErrorCode::ArithmeticOverflow)?;
-        let days_staked = total_seconds / 86400;  // Floor to full days only
-        let partial_seconds = total_seconds % 86400;
+        pool.is_paused = true;
+        pool.emergency_pause_reason = reason.clone();
+        pool.updated_at = clock.unix_timestamp;
         
-        // Only allow claiming if we have full days (no partial day claims)
-        require!(days_staked > 0, ErrorCode::NoFullDaysCompleted);
+        emit!(EmergencyPauseEvent {
+            admin: ctx.accounts.admin.key(),
+            reason,
+            timestamp: clock.unix_timestamp,
+        });
         
-        let base_weight = match user_stake.tier {
-            1 => 1.0,
-            2 => 1.5,
-            3 => 2.0,
-            _ => return err!(ErrorCode::InvalidTier),
-        };
-        
-        let weight = base_weight;
-
-        let protocol_reinvestment = if user_stake.tier == 3 { 0.0 } else { 0.2 };
-        let user_reinvestment = user_stake.auto_reinvest_percentage as f64 / 100.0;
-        let total_reinvestment = (protocol_reinvestment + user_reinvestment).min(1.0);
-
-        let jupsol_price = pyth::get_price(&ctx.accounts.pyth_jupsol.key())?;
-        let current_pool_value = kamino::get_vault_value(&ctx.accounts.kamino_vault.key())?;
-        require!(current_pool_value >= ctx.accounts.fund.total_deposits.checked_mul(jupsol_price).ok_or(ErrorCode::ArithmeticOverflow)?, ErrorCode::InvalidVaultValue);
-        let total_yields = current_pool_value.saturating_sub(ctx.accounts.fund.total_deposits);
-        let total_weighted_deposits = ctx.accounts.fund.total_deposits as f64;
-        let user_weighted_share = (user_stake.deposit_amount as f64 * weight) / total_weighted_deposits;
-        let user_yield = (user_weighted_share * total_yields as f64) as u64;
-
-        if user_yield > 0 {
-            let reinvest_amount = (user_yield as f64 * total_reinvestment) as u64;
-            let user_payout = user_yield.checked_sub(reinvest_amount).ok_or(ErrorCode::ArithmeticOverflow)?;
-
-            // Payout to user
-            if user_payout > 0 {
-                let unwind_ix = kamino::reduce_position(
-                    &ctx.accounts.kamino_program.key(),
-                    &ctx.accounts.kamino_vault.key(),
-                    &ctx.accounts.kamino_collateral_ata.key(),
-                    &ctx.accounts.kamino_debt_ata.key(),
-                    user_payout,
-                    &ctx.accounts.user_destination.key(),
-                    &ctx.accounts.token_program.key(),
-                )?;
-                invoke(
-                    &unwind_ix,
-                    &[
-                        ctx.accounts.kamino_vault.clone(),
-                        ctx.accounts.kamino_collateral_ata.to_account_info(),
-                        ctx.accounts.kamino_debt_ata.to_account_info(),
-                        ctx.accounts.user_destination.clone(),
-                        ctx.accounts.kamino_program.to_account_info(),
-                        ctx.accounts.token_program.to_account_info(),
-                    ],
-                )?;
-            }
-
-            // Reinvest to yield_reserve
-            if reinvest_amount > 0 {
-                let reinvest_unwind_ix = kamino::reduce_position(
-                    &ctx.accounts.kamino_program.key(),
-                    &ctx.accounts.kamino_vault.key(),
-                    &ctx.accounts.kamino_collateral_ata.key(),
-                    &ctx.accounts.kamino_debt_ata.key(),
-                    reinvest_amount,
-                    &ctx.accounts.yield_reserve.key(),
-                    &ctx.accounts.token_program.key(),
-                )?;
-                invoke(
-                    &reinvest_unwind_ix,
-                    &[
-                        ctx.accounts.kamino_vault.clone(),
-                        ctx.accounts.kamino_collateral_ata.to_account_info(),
-                        ctx.accounts.kamino_debt_ata.to_account_info(),
-                        ctx.accounts.yield_reserve.clone(),
-                        ctx.accounts.kamino_program.to_account_info(),
-                        ctx.accounts.token_program.to_account_info(),
-                    ],
-                )?;
-
-                let reinvest_stake_ix = jupiter_swap_api::stake_sol_to_jsol(
-                    &ctx.accounts.jupiter_stake_pool.key(),
-                    &ctx.accounts.yield_reserve.key(),
-                    &ctx.accounts.program_jsol_ata.key(),
-                    reinvest_amount,
-                    &ctx.accounts.token_program.key(),
-                )?;
-                invoke(
-                    &reinvest_stake_ix,
-                    &[
-                        ctx.accounts.jupiter_stake_pool.clone(),
-                        ctx.accounts.yield_reserve.clone(),
-                        &ctx.accounts.program_jsol_ata.to_account_info(),
-                        ctx.accounts.token_program.to_account_info(),
-                    ],
-                )?;
-
-                let reinvest_deposit_ix = kamino::deposit_to_multiply_vault(
-                    &ctx.accounts.kamino_program.key(),
-                    &ctx.accounts.program_jsol_ata.key(),
-                    &ctx.accounts.kamino_vault.key(),
-                    &ctx.accounts.kamino_collateral_ata.key(),
-                    &ctx.accounts.kamino_debt_ata.key(),
-                    reinvest_amount,
-                    4.6,
-                    &ctx.accounts.token_program.key(),
-                )?;
-                invoke(
-                    &reinvest_deposit_ix,
-                    &[
-                        ctx.accounts.program_jsol_ata.to_account_info(),
-                        ctx.accounts.kamino_vault.clone(),
-                        ctx.accounts.kamino_collateral_ata.to_account_info(),
-                        ctx.accounts.kamino_debt_ata.to_account_info(),
-                        ctx.accounts.kamino_program.to_account_info(),
-                        ctx.accounts.token_program.to_account_info(),
-                    ],
-                )?;
-
-                let fund = &mut ctx.accounts.fund;
-                fund.total_deposits = fund.total_deposits.checked_add(reinvest_amount).ok_or(ErrorCode::ArithmeticOverflow)?;
-            }
-            
-            // Update lifetime staked days after successful claim
-            user_stake.lifetime_staked_days = user_stake.lifetime_staked_days.checked_add(days_staked).ok_or(ErrorCode::ArithmeticOverflow)?;
-            user_stake.stake_timestamp = current_time; // Reset timestamp for next period
-        }
-
         Ok(())
     }
 
-    pub fn set_auto_reinvest(ctx: Context<SetAutoReinvest>, fund_index: u64, auto_reinvest_percentage: u8) -> Result<()> {
-        require!(ctx.accounts.sentinel_stake_ata.amount >= 1 && ctx.accounts.sentinel_stake_ata.mint == ctx.accounts.fund.stake_nft_mint, ErrorCode::UnauthorizedWallet);
-        require!(ctx.accounts.sentinel_tier_ata.amount >= 1 && ctx.accounts.sentinel_tier_ata.mint == ctx.accounts.fund.tier_nft_mint, ErrorCode::InvalidTierNFT);
-        require!(auto_reinvest_percentage <= 100, ErrorCode::InvalidPercentage);
-        ctx.accounts.user_stake.auto_reinvest_percentage = auto_reinvest_percentage;
-        Ok(())
-    }
-
-    pub fn deposit_yield_reserve(ctx: Context<DepositYieldReserve>, fund_index: u64) -> Result<()> {
-        let fund = &mut ctx.accounts.fund;
-        let yield_balance = ctx.accounts.yield_reserve.lamports();
+    /// Emergency unpause function
+    pub fn emergency_unpause(ctx: Context<AdminOnly>) -> Result<()> {
+        let pool = &mut ctx.accounts.pool;
+        let clock = Clock::get()?;
         
-        if yield_balance > 0 {
-            // Stake to JupSOL
-            let stake_ix = jupiter_swap_api::stake_sol_to_jsol(
-                &ctx.accounts.jupiter_stake_pool.key(),
-                &ctx.accounts.yield_reserve.key(),
-                &ctx.accounts.program_jsol_ata.key(),
-                yield_balance,
-                &ctx.accounts.token_program.key(),
-            )?;
-            invoke(
-                &stake_ix,
-                &[
-                    ctx.accounts.jupiter_stake_pool.clone(),
-                    ctx.accounts.yield_reserve.clone(),
-                    ctx.accounts.program_jsol_ata.to_account_info(),
-                    ctx.accounts.token_program.to_account_info(),
-                ],
-            )?;
-
-            // Deposit to Kamino
-            let kamino_deposit_ix = kamino::deposit_to_multiply_vault(
-                &ctx.accounts.kamino_program.key(),
-                &ctx.accounts.program_jsol_ata.key(),
-                &ctx.accounts.kamino_vault.key(),
-                &ctx.accounts.kamino_collateral_ata.key(),
-                &ctx.accounts.kamino_debt_ata.key(),
-                yield_balance,
-                4.6,
-                &ctx.accounts.token_program.key(),
-            )?;
-            invoke(
-                &kamino_deposit_ix,
-                &[
-                    ctx.accounts.program_jsol_ata.to_account_info(),
-                    ctx.accounts.kamino_vault.clone(),
-                    ctx.accounts.kamino_collateral_ata.to_account_info(),
-                    ctx.accounts.kamino_debt_ata.to_account_info(),
-                    ctx.accounts.kamino_program.to_account_info(),
-                    ctx.accounts.token_program.to_account_info(),
-                ],
-            )?;
-
-            fund.total_deposits = fund.total_deposits.checked_add(yield_balance).ok_or(ErrorCode::ArithmeticOverflow)?;
-        }
-
+        pool.is_paused = false;
+        pool.emergency_pause_reason = "".to_string();
+        pool.updated_at = clock.unix_timestamp;
+        
+        emit!(EmergencyUnpauseEvent {
+            admin: ctx.accounts.admin.key(),
+            timestamp: clock.unix_timestamp,
+        });
+        
         Ok(())
     }
 
-    pub fn find_open_fund(ctx: Context<FindOpenFund>) -> Result<u64> {
-        let fund_manager = &ctx.accounts.fund_manager;
-        for i in 0..fund_manager.fund_count {
-            let fund_seeds = &[b"fund".as_ref(), i.to_le_bytes().as_ref()];
-            let fund_key = Pubkey::find_program_address(fund_seeds, &Self::id()).0;
-            let fund: Account<Fund> = Account::try_from(&fund_key)?;
-            if fund.user_count < 100 {
-                return Ok(i);
-            }
-        }
-        Ok(fund_manager.fund_count)
+    /// Update APY with bounds checking
+    pub fn update_apy(ctx: Context<AdminOnly>, new_apy: u64) -> Result<()> {
+        require!(new_apy <= ctx.accounts.pool.max_apy, ErrorCode::InvalidApy);
+        require!(new_apy >= 100, ErrorCode::InvalidApy); // Min 1% APY
+        
+        let pool = &mut ctx.accounts.pool;
+        let clock = Clock::get()?;
+        let old_apy = pool.apy;
+        
+        pool.apy = new_apy;
+        pool.updated_at = clock.unix_timestamp;
+        
+        emit!(ParameterUpdateEvent {
+            admin: ctx.accounts.admin.key(),
+            parameter: "apy".to_string(),
+            old_value: old_apy,
+            new_value: new_apy,
+            timestamp: clock.unix_timestamp,
+        });
+        
+        Ok(())
     }
 
-    pub fn get_user_info(ctx: Context<GetUserInfo>, fund_index: u64) -> Result<(u64, u64, u8, bool, bool, u8, u64, u64)> {
-        let has_stake_nft = ctx.accounts.sentinel_stake_ata.amount >= 1 && 
-                           ctx.accounts.sentinel_stake_ata.mint == ctx.accounts.fund.stake_nft_mint;
-        let has_tier_nft = ctx.accounts.sentinel_tier_ata.amount >= 1 && 
-                          ctx.accounts.sentinel_tier_ata.mint == ctx.accounts.fund.tier_nft_mint;
-        Ok((
-            ctx.accounts.user_stake.deposit_amount,
-            ctx.accounts.user_stake.stake_timestamp,
-            ctx.accounts.user_stake.tier,
-            has_stake_nft,
-            has_tier_nft,
-            ctx.accounts.user_stake.auto_reinvest_percentage,
-            ctx.accounts.user_stake.committed_days,
-            ctx.accounts.user_stake.lifetime_staked_days,
-        ))
+    /// Update deposit fee with bounds checking
+    pub fn update_deposit_fee(ctx: Context<AdminOnly>, new_fee: u64) -> Result<()> {
+        require!(new_fee <= 1000, ErrorCode::InvalidFee); // Max 10% fee
+        require!(new_fee >= 10, ErrorCode::InvalidFee);   // Min 0.1% fee
+        
+        let pool = &mut ctx.accounts.pool;
+        let clock = Clock::get()?;
+        let old_fee = pool.deposit_fee;
+        
+        pool.deposit_fee = new_fee;
+        pool.updated_at = clock.unix_timestamp;
+        
+        emit!(ParameterUpdateEvent {
+            admin: ctx.accounts.admin.key(),
+            parameter: "deposit_fee".to_string(),
+            old_value: old_fee,
+            new_value: new_fee,
+            timestamp: clock.unix_timestamp,
+        });
+        
+        Ok(())
     }
 
-    fn get_est_apy(tier: u8) -> f64 {
-        match tier {
-            1 => 11.64,
-            2 => 17.45,
-            3 => 23.27,
-            _ => 0.0,
-        }
+    /// Update pool limits
+    pub fn update_pool_limits(
+        ctx: Context<AdminOnly>,
+        max_deposit_per_user: u64,
+        max_total_staked: u64,
+        min_stake_amount: u64,
+        max_stake_amount: u64,
+    ) -> Result<()> {
+        let pool = &mut ctx.accounts.pool;
+        let clock = Clock::get()?;
+        
+        // Validate new limits
+        require!(max_deposit_per_user > 0, ErrorCode::InvalidLimit);
+        require!(max_total_staked > pool.total_staked, ErrorCode::InvalidLimit);
+        require!(min_stake_amount > 0, ErrorCode::InvalidLimit);
+        require!(max_stake_amount >= min_stake_amount, ErrorCode::InvalidLimit);
+        require!(max_deposit_per_user >= max_stake_amount, ErrorCode::InvalidLimit);
+        
+        pool.max_deposit_per_user = max_deposit_per_user;
+        pool.max_total_staked = max_total_staked;
+        pool.min_stake_amount = min_stake_amount;
+        pool.max_stake_amount = max_stake_amount;
+        pool.updated_at = clock.unix_timestamp;
+        
+        Ok(())
+    }
+
+    /// Withdraw fees (admin only)
+    pub fn withdraw_fees(ctx: Context<WithdrawFees>, amount: u64) -> Result<()> {
+        let pool = &mut ctx.accounts.pool;
+        let clock = Clock::get()?;
+        
+        require!(amount <= pool.total_fees_collected, ErrorCode::InsufficientFunds);
+        require!(amount <= ctx.accounts.pool_vault.lamports(), ErrorCode::InsufficientFunds);
+        
+        pool.total_fees_collected = pool.total_fees_collected
+            .checked_sub(amount)
+            .ok_or(ErrorCode::ArithmeticOverflow)?;
+        pool.updated_at = clock.unix_timestamp;
+        
+        // Transfer fees to admin
+        let transfer_ix = anchor_lang::solana_program::system_instruction::transfer(
+            &ctx.accounts.pool_vault.key(),
+            &ctx.accounts.admin.key(),
+            amount,
+        );
+        
+        anchor_lang::solana_program::program::invoke_signed(
+            &transfer_ix,
+            &[
+                ctx.accounts.pool_vault.clone(),
+                ctx.accounts.admin.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+            ],
+            &[&[b"pool_vault", &[ctx.bumps.pool_vault]]],
+        )?;
+        
+        Ok(())
     }
 }
 
+// ===== ACCOUNT CONTEXTS =====
+
+#[derive(Accounts)]
+pub struct InitializePool<'info> {
+    #[account(mut)]
+    pub admin: Signer<'info>,
+    
+    #[account(
+        init,
+        payer = admin,
+        space = 8 + Pool::INIT_SPACE,
+        seeds = [b"pool"],
+        bump
+    )]
+    pub pool: Account<'info, Pool>,
+    
+    #[account(
+        init,
+        payer = admin,
+        space = 0,
+        seeds = [b"pool_vault"],
+        bump
+    )]
+    pub pool_vault: SystemAccount<'info>,
+    
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct Stake<'info> {
+    #[account(mut)]
+    pub user: Signer<'info>,
+    
+    #[account(
+        mut,
+        seeds = [b"pool"],
+        bump,
+        constraint = pool.is_active @ ErrorCode::PoolInactive,
+        constraint = !pool.is_paused @ ErrorCode::PoolPaused
+    )]
+    pub pool: Account<'info, Pool>,
+    
+    #[account(
+        init_if_needed,
+        payer = user,
+        space = 8 + UserStake::INIT_SPACE,
+        seeds = [b"user_stake", user.key().as_ref()],
+        bump
+    )]
+    pub user_stake: Account<'info, UserStake>,
+    
+    #[account(
+        mut,
+        seeds = [b"pool_vault"],
+        bump
+    )]
+    pub pool_vault: SystemAccount<'info>,
+    
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct ClaimYields<'info> {
+    #[account(mut)]
+    pub user: Signer<'info>,
+    
+    #[account(
+        mut,
+        seeds = [b"pool"],
+        bump,
+        constraint = pool.is_active @ ErrorCode::PoolInactive,
+        constraint = !pool.is_paused @ ErrorCode::PoolPaused
+    )]
+    pub pool: Account<'info, Pool>,
+    
+    #[account(
+        mut,
+        seeds = [b"user_stake", user.key().as_ref()],
+        bump,
+        constraint = user_stake.amount > 0 @ ErrorCode::NoStake
+    )]
+    pub user_stake: Account<'info, UserStake>,
+    
+    #[account(
+        mut,
+        seeds = [b"pool_vault"],
+        bump
+    )]
+    pub pool_vault: SystemAccount<'info>,
+    
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct Unstake<'info> {
+    #[account(mut)]
+    pub user: Signer<'info>,
+    
+    #[account(
+        mut,
+        seeds = [b"pool"],
+        bump,
+        constraint = !pool.is_paused @ ErrorCode::PoolPaused
+    )]
+    pub pool: Account<'info, Pool>,
+    
+    #[account(
+        mut,
+        seeds = [b"user_stake", user.key().as_ref()],
+        bump,
+        constraint = user_stake.amount > 0 @ ErrorCode::NoStake
+    )]
+    pub user_stake: Account<'info, UserStake>,
+    
+    #[account(
+        mut,
+        seeds = [b"pool_vault"],
+        bump
+    )]
+    pub pool_vault: SystemAccount<'info>,
+    
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct AdminOnly<'info> {
+    #[account(
+        constraint = admin.key() == pool.admin @ ErrorCode::Unauthorized
+    )]
+    pub admin: Signer<'info>,
+    
+    #[account(
+        mut,
+        seeds = [b"pool"],
+        bump
+    )]
+    pub pool: Account<'info, Pool>,
+}
+
+#[derive(Accounts)]
+pub struct WithdrawFees<'info> {
+    #[account(
+        constraint = admin.key() == pool.admin @ ErrorCode::Unauthorized
+    )]
+    pub admin: Signer<'info>,
+    
+    #[account(
+        mut,
+        seeds = [b"pool"],
+        bump
+    )]
+    pub pool: Account<'info, Pool>,
+    
+    #[account(
+        mut,
+        seeds = [b"pool_vault"],
+        bump
+    )]
+    pub pool_vault: SystemAccount<'info>,
+    
+    pub system_program: Program<'info, System>,
+}
+
+// ===== ACCOUNT STRUCTS =====
+
 #[account]
-pub struct FundManager {
-    pub fund_count: u64,
+#[derive(InitSpace)]
+pub struct Pool {
+    pub admin: Pubkey,
+    pub total_staked: u64,
+    pub total_users: u64,
+    pub apy: u64,                    // Basis points (1200 = 12%)
+    pub deposit_fee: u64,            // Basis points (50 = 0.5%)
+    pub max_apy: u64,                // Maximum allowed APY
+    pub min_commitment_days: u64,    // Minimum commitment period
+    pub max_commitment_days: u64,    // Maximum commitment period
+    pub is_active: bool,             // Pool active status
+    pub is_paused: bool,             // Emergency pause status
+    pub emergency_pause_reason: String, // Reason for emergency pause
+    pub total_fees_collected: u64,   // Total fees collected
+    pub total_yields_paid: u64,      // Total yields paid out
+    pub last_rebalance_timestamp: i64, // Last rebalance timestamp
+    pub max_deposit_per_user: u64,   // Maximum deposit per user
+    pub max_total_staked: u64,       // Maximum total staked
+    pub min_stake_amount: u64,       // Minimum stake amount
+    pub max_stake_amount: u64,       // Maximum stake amount
+    pub created_at: i64,             // Creation timestamp
+    pub updated_at: i64,             // Last update timestamp
 }
 
 #[account]
-pub struct Fund {
-    pub stake_nft_mint: Pubkey,
-    pub tier_nft_mint: Pubkey,
-    pub total_deposits: u64,
-    pub user_count: u64,
-    pub last_rebalance_timestamp: u64,
-}
-
-#[account]
+#[derive(InitSpace)]
 pub struct UserStake {
-    pub deposit_amount: u64,
-    pub stake_timestamp: u64,
-    pub lifetime_staked_days: u64,  // Cumulative full days staked historically
-    pub committed_days: u64,        // User-chosen full days to commit (min 1)
-    pub tier: u8,
-    pub auto_reinvest_percentage: u8,
-}
-
-#[account]
-pub struct TempScores {
-    pub scores: Vec<TempScore>,
-}
-
-#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
-pub struct TempScore {
     pub user: Pubkey,
-    pub score: u64,
+    pub amount: u64,
+    pub committed_days: u64,
+    pub stake_timestamp: i64,
+    pub last_claim_timestamp: i64,
+    pub total_staked_lifetime: u64,  // Total amount staked over lifetime
+    pub total_days_staked: u64,      // Total days staked over lifetime
+    pub total_yields_claimed: u64,   // Total yields claimed over lifetime
 }
 
-#[account]
-pub struct KaminoProgram;
-
-#[account]
-pub struct TokenMetadata;
+// ===== ERROR CODES =====
 
 #[error_code]
 pub enum ErrorCode {
-    #[msg("User wallet is not authorized (missing Stake NFT)")]
-    UnauthorizedWallet,
-    #[msg("User has no deposit")]
-    NoDeposit,
-    #[msg("Fund is already full")]
-    FundFull,
-    #[msg("Deposit amount must be greater than zero")]
+    #[msg("Amount must be greater than zero")]
     ZeroAmount,
-    #[msg("Invalid tier")]
-    InvalidTier,
+    
+    #[msg("Amount is too small")]
+    AmountTooSmall,
+    
+    #[msg("Amount is too large")]
+    AmountTooLarge,
+    
+    #[msg("Invalid commitment period")]
+    InvalidCommitment,
+    
+    #[msg("Pool is not active")]
+    PoolInactive,
+    
+    #[msg("Pool is paused")]
+    PoolPaused,
+    
     #[msg("Arithmetic overflow")]
     ArithmeticOverflow,
-    #[msg("Invalid vault value")]
-    InvalidVaultValue,
-    #[msg("High slippage in swap")]
-    HighSlippage,
-    #[msg("Invalid Tier NFT")]
-    InvalidTierNFT,
-    #[msg("Invalid batch size")]
-    InvalidBatchSize,
-    #[msg("Rebalance not due")]
-    RebalanceNotDue,
-    #[msg("Invalid percentage")]
-    InvalidPercentage,
-    #[msg("Invalid commitment days (must be >= 1)")]
-    InvalidCommitment,
-    #[msg("No full days completed for yield claim")]
-    NoFullDaysCompleted,
+    
+    #[msg("No yields to claim")]
+    NoYieldsToClaim,
+    
+    #[msg("Commitment period not met")]
+    CommitmentNotMet,
+    
+    #[msg("No stake found")]
+    NoStake,
+    
+    #[msg("Unauthorized access")]
+    Unauthorized,
+    
+    #[msg("Invalid APY")]
+    InvalidApy,
+    
+    #[msg("Invalid fee")]
+    InvalidFee,
+    
+    #[msg("Invalid limit")]
+    InvalidLimit,
+    
+    #[msg("Insufficient funds")]
+    InsufficientFunds,
+    
+    #[msg("User limit exceeded")]
+    UserLimitExceeded,
+    
+    #[msg("Pool limit exceeded")]
+    PoolLimitExceeded,
 }
 

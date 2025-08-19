@@ -1,0 +1,241 @@
+rules:
+  # Solana/Anchor specific security rules
+  - id: solana-unsafe-arithmetic
+    pattern: |
+      $X + $Y
+      $X - $Y
+      $X * $Y
+      $X / $Y
+    message: "Use checked arithmetic operations to prevent overflow/underflow"
+    severity: ERROR
+    languages: [rust]
+
+  - id: solana-unchecked-account
+    pattern: |
+      #[account(...)]
+      pub $ACCOUNT: Account<'info, $TYPE>
+    message: "Account validation should include proper checks"
+    severity: WARNING
+    languages: [rust]
+
+  - id: solana-unsafe-cpi
+    pattern: |
+      invoke(
+        &$INSTRUCTION,
+        &[$ACCOUNTS]
+      )
+    message: "Use invoke_signed for program-derived addresses"
+    severity: WARNING
+    languages: [rust]
+
+  # General Rust security rules
+  - id: rust-unsafe-block
+    pattern: |
+      unsafe {
+        $BODY
+      }
+    message: "Unsafe blocks should be carefully reviewed"
+    severity: WARNING
+    languages: [rust]
+
+  - id: rust-panic
+    pattern: |
+      panic!($MSG)
+    message: "Avoid panic! in production code, use proper error handling"
+    severity: WARNING
+    languages: [rust]
+
+  # TypeScript/JavaScript security rules
+  - id: js-unsafe-eval
+    pattern: |
+      eval($EXPR)
+    message: "Avoid eval() for security reasons"
+    severity: ERROR
+    languages: [javascript, typescript]
+
+  - id: js-unsafe-innerhtml
+    pattern: |
+      $OBJ.innerHTML = $EXPR
+    message: "Use textContent instead of innerHTML to prevent XSS"
+    severity: WARNING
+    languages: [javascript, typescript]
+
+  # Hardcoded secrets
+  - id: hardcoded-secret
+    pattern: |
+      "password"|"secret"|"key"|"token"
+    message: "Avoid hardcoded secrets in code"
+    severity: ERROR
+    languages: [rust, javascript, typescript]
+
+  # SQL injection patterns
+  - id: sql-injection
+    pattern: |
+      $QUERY + $USER_INPUT
+    message: "Use parameterized queries to prevent SQL injection"
+    severity: ERROR
+    languages: [javascript, typescript]
+
+  # Path traversal
+  - id: path-traversal
+    pattern: |
+      $PATH + $USER_INPUT
+    message: "Validate user input to prevent path traversal attacks"
+    severity: WARNING
+    languages: [javascript, typescript]
+
+  # Cross-site scripting
+  - id: xss-reflection
+    pattern: |
+      document.write($USER_INPUT)
+    message: "Avoid directly writing user input to DOM"
+    severity: ERROR
+    languages: [javascript, typescript]
+
+  # Command injection
+  - id: command-injection
+    pattern: |
+      exec($USER_INPUT)
+    message: "Validate user input before executing commands"
+    severity: ERROR
+    languages: [javascript, typescript]
+
+  # Deserialization
+  - id: unsafe-deserialization
+    pattern: |
+      JSON.parse($USER_INPUT)
+    message: "Validate JSON input before parsing"
+    severity: WARNING
+    languages: [javascript, typescript]
+
+  # Memory safety
+  - id: rust-unsafe-deref
+    pattern: |
+      *$PTR
+    message: "Unsafe pointer dereference should be reviewed"
+    severity: WARNING
+    languages: [rust]
+
+  # Integer overflow
+  - id: rust-int-overflow
+    pattern: |
+      $X + $Y
+      $X - $Y
+      $X * $Y
+    message: "Use checked arithmetic to prevent integer overflow"
+    severity: WARNING
+    languages: [rust]
+
+  # Null pointer dereference
+  - id: rust-null-deref
+    pattern: |
+      $PTR.unwrap()
+    message: "Consider using safe alternatives to unwrap()"
+    severity: WARNING
+    languages: [rust]
+
+  # Resource exhaustion
+  - id: rust-unbounded-loop
+    pattern: |
+      loop {
+        $BODY
+      }
+    message: "Ensure loops have proper termination conditions"
+    severity: WARNING
+    languages: [rust]
+
+  # Cryptographic issues
+  - id: weak-crypto
+    pattern: |
+      MD5|SHA1
+    message: "Use strong cryptographic algorithms"
+    severity: ERROR
+    languages: [rust, javascript, typescript]
+
+  # Random number generation
+  - id: weak-random
+    pattern: |
+      Math.random()
+    message: "Use cryptographically secure random number generation"
+    severity: WARNING
+    languages: [javascript, typescript]
+
+  # Timing attacks
+  - id: timing-attack
+    pattern: |
+      $A == $B
+    message: "Use constant-time comparison for sensitive data"
+    severity: WARNING
+    languages: [rust, javascript, typescript]
+
+  # Logging sensitive data
+  - id: sensitive-logging
+    pattern: |
+      println!($SENSITIVE)
+      log::info!($SENSITIVE)
+    message: "Avoid logging sensitive information"
+    severity: WARNING
+    languages: [rust]
+
+  # Error information disclosure
+  - id: error-disclosure
+    pattern: |
+      return Err($DETAILED_ERROR)
+    message: "Avoid exposing internal error details"
+    severity: WARNING
+    languages: [rust]
+
+  # Access control
+  - id: missing-access-control
+    pattern: |
+      pub fn $FUNC(
+    message: "Ensure proper access control for public functions"
+    severity: WARNING
+    languages: [rust]
+
+  # Input validation
+  - id: missing-input-validation
+    pattern: |
+      pub fn $FUNC($PARAM: $TYPE) {
+    message: "Validate input parameters"
+    severity: WARNING
+    languages: [rust]
+
+  # State consistency
+  - id: state-inconsistency
+    pattern: |
+      $STATE.field = $VALUE
+    message: "Ensure state updates maintain consistency"
+    severity: WARNING
+    languages: [rust]
+
+  # Reentrancy
+  - id: reentrancy-risk
+    pattern: |
+      invoke(
+        &$INSTRUCTION,
+        &[$ACCOUNTS]
+      )
+    message: "Consider reentrancy risks when making external calls"
+    severity: WARNING
+    languages: [rust]
+
+  # Gas optimization
+  - id: gas-inefficient
+    pattern: |
+      for $VAR in $ITER {
+        $BODY
+      }
+    message: "Consider gas optimization for loops"
+    severity: INFO
+    languages: [rust]
+
+  # Storage optimization
+  - id: storage-inefficient
+    pattern: |
+      #[account(...)]
+      pub $ACCOUNT: Account<'info, $TYPE>
+    message: "Optimize account storage usage"
+    severity: INFO
+    languages: [rust]
+

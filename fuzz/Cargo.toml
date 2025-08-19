@@ -1,0 +1,27 @@
+[package]
+name = "defi-trust-fund-fuzz"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+libfuzzer-sys = "0.4"
+anchor-lang = "0.29.0"
+solana-program = "1.16.0"
+arbitrary = { version = "1.0", features = ["derive"] }
+
+[[bin]]
+name = "fuzz_deposit"
+path = "src/fuzz_deposit.rs"
+
+[[bin]]
+name = "fuzz_claim_yields"
+path = "src/fuzz_claim_yields.rs"
+
+[[bin]]
+name = "fuzz_burn_nft"
+path = "src/fuzz_burn_nft.rs"
+
+[[bin]]
+name = "fuzz_governance"
+path = "src/fuzz_governance.rs"
+

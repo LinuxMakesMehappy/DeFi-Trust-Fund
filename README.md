@@ -168,8 +168,14 @@ KAMINO_PROGRAM_ID=KLend2g3c5MGDmXenSmC16qBkmga6DhbVrJmzexvef
 # Run all tests
 anchor test
 
-# Run specific test file
-anchor test tests/defi-trust-fund.ts
+# Run security tests
+anchor test tests/security-tests.ts
+
+# Run specific test suites
+npm run test:security
+npm run test:overflow
+npm run test:access-control
+npm run test:emergency-controls
 
 # Test specific scenarios
 npm run test:commitment
@@ -202,17 +208,30 @@ npm run test:coverage
 ## 🔒 Security Features
 
 ### Smart Contract Security
-- ✅ **Checked Arithmetic**: All calculations use safe math
-- ✅ **Access Control**: Admin-only functions protected
-- ✅ **Input Validation**: Comprehensive parameter checks
-- ✅ **Reentrancy Protection**: Anchor framework protection
-- ✅ **NFT Soulbinding**: Non-transferable authorization tokens
+- ✅ **Enhanced Access Control**: Multi-level authorization with emergency controls
+- ✅ **Comprehensive Overflow Protection**: All arithmetic operations use checked methods
+- ✅ **Input Validation**: Strict parameter bounds and validation
+- ✅ **Reentrancy Protection**: Anchor framework protection with CEI pattern
+- ✅ **Emergency Pause System**: Immediate pause capability with reason tracking
+- ✅ **State Consistency**: Atomic operations with rollback protection
+- ✅ **Fee Management**: Transparent fee collection with admin controls
+- ✅ **User Limits**: Per-user and pool-wide deposit limits
+- ✅ **Penalty System**: Early exit penalties and commitment enforcement
+- ✅ **Event Logging**: Comprehensive audit trails for all operations
+
+### Security Testing
+- ✅ **Automated Security Tests**: Comprehensive test suite covering all vulnerabilities
+- ✅ **Fuzz Testing**: Boundary testing and edge case validation
+- ✅ **Integration Testing**: End-to-end security validation
+- ✅ **Arithmetic Safety**: Overflow/underflow protection testing
+- ✅ **Access Control**: Authorization and permission testing
 
 ### Frontend Security
 - ✅ **Wallet Integration**: Secure Solana wallet connections
 - ✅ **Input Sanitization**: All user inputs validated
 - ✅ **Error Handling**: Comprehensive error management
 - ✅ **TypeScript**: Type-safe development
+- ✅ **Security Monitoring**: Real-time security alerts and monitoring
 
 ## 🤝 Contributing
 
@@ -234,6 +253,13 @@ We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🔒 Security Documentation
+
+For comprehensive security information, please refer to:
+- [Security Audit Report](docs/security-audit.md) - Detailed security analysis and improvements
+- [Secure Deployment Guide](docs/secure-deployment-guide.md) - Step-by-step secure deployment instructions
+- [Mathematical Analysis](docs/mathematical-analysis.md) - Economic model and mathematical foundations
 
 ## 🙏 Acknowledgments
 

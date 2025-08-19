@@ -1,34 +1,30 @@
 [package]
 name = "defi-trust-fund"
 version = "0.1.0"
-description = "DeFi Trust Fund - Self-Perpetuating Proof of Loyalty and Liquidity Protocol"
 edition = "2021"
-
-[lib]
-crate-type = ["cdylib", "lib"]
-name = "defi_trust_fund"
-
-[features]
-no-entrypoint = []
-no-idl = []
-no-log-ix-name = []
-cpi = ["no-entrypoint"]
-default = []
+description = "DeFi Trust Fund - Self-Perpetuating Proof of Loyalty and Liquidity Protocol"
+authors = ["DeFi Trust Fund Team"]
+license = "MIT"
+repository = "https://github.com/your-org/defi-trust-fund"
+keywords = ["solana", "anchor", "defi", "staking", "liquidity", "yield-farming"]
+categories = ["blockchain", "cryptography"]
 
 [dependencies]
 anchor-lang = "0.29.0"
 anchor-spl = "0.29.0"
-spl-token = "4.0.0"
-spl-token-metadata = "3.2.0"
-spl-associated-token-account = "2.2.0"
-pyth-solana-receiver-sdk = "0.3.0"
+solana-program = "1.16.0"
 
-# Jupiter Swap API (placeholder - needs actual implementation)
-jupiter-swap-api = { git = "https://github.com/jup-ag/jupiter-core", features = ["no-entrypoint"] }
+[dev-dependencies]
+anchor-client = "0.29.0"
 
-# Kamino SDK (placeholder - needs actual implementation)  
-kamino = { git = "https://github.com/kamino-finance/kamino-sdk", features = ["no-entrypoint"] }
+[lib]
+crate-type = ["cdylib", "lib"]
 
-# Pyth Oracle (placeholder - needs actual implementation)
-pyth = { git = "https://github.com/pyth-network/pyth-solana-receiver", features = ["no-entrypoint"] }
+[profile.release]
+overflow-checks = true
+lto = true
+codegen-units = 1
+opt-level = 3
 
+[profile.dev]
+overflow-checks = true
