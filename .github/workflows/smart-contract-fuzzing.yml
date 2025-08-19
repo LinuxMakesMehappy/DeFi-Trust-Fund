@@ -22,10 +22,9 @@ jobs:
         fetch-depth: 0
     
     - name: Setup Rust
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@stable
       with:
         toolchain: 1.70.0
-        override: true
         components: rustfmt, clippy
     
     - name: Setup Solana
