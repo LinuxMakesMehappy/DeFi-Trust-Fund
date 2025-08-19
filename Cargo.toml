@@ -13,7 +13,6 @@ categories = ["blockchain", "cryptography"]
 anchor-lang = "=0.29.0"
 anchor-spl = "=0.29.0"
 solana-program = "=1.16.0"
-mpl-token-metadata = "=3.2.0"
 
 [dev-dependencies]
 anchor-client = "=0.29.0"
@@ -34,3 +33,8 @@ overflow-checks = true
 solana-program = "=1.16.0"
 anchor-lang = "=0.29.0"
 anchor-spl = "=0.29.0"
+anchor-derive-space = "=0.29.0"
+anchor-attribute-constant = "=0.29.0"
+anchor-attribute-program = "=0.29.0"
+anchor-attribute-event = "=0.29.0"
+anchor-derive-serde = "=0.29.0"
