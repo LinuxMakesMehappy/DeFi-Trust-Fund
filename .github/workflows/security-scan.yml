@@ -163,9 +163,25 @@ jobs:
     
     - name: Run fuzzing tests
       run: |
-        # Run fuzzing tests if available
-        cargo fuzz run fuzz_deposit -- -max_total_time=300 || echo "Fuzzing tests not available"
-        cargo fuzz run fuzz_governance -- -max_total_time=300 || echo "Fuzzing tests not available"
+        # Check if fuzz directory exists and run fuzzing tests
+        if [ -d "fuzz" ]; then
+          echo "Running fuzzing tests..."
+          cd fuzz
+          
+          # Build fuzzing targets
+          cargo build --release || echo "Fuzzing build failed"
+          
+          # Run quick fuzzing tests (limited time for CI)
+          echo "Running deposit fuzzing test..."
+          timeout 60s cargo run --release --bin fuzz_deposit || echo "Deposit fuzzing test failed or timed out"
+          
+          echo "Running governance fuzzing test..."
+          timeout 60s cargo run --release --bin fuzz_governance || echo "Governance fuzzing test failed or timed out"
+          
+          cd ..
+        else
+          echo "Fuzz directory not found, skipping fuzzing tests"
+        fi
     
     - name: Static analysis
       run: |

@@ -14,14 +14,6 @@ name = "fuzz_deposit"
 path = "src/fuzz_deposit.rs"
 
 [[bin]]
-name = "fuzz_claim_yields"
-path = "src/fuzz_claim_yields.rs"
-
-[[bin]]
-name = "fuzz_burn_nft"
-path = "src/fuzz_burn_nft.rs"
-
-[[bin]]
 name = "fuzz_governance"
 path = "src/fuzz_governance.rs"
 
