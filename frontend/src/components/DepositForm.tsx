@@ -16,12 +16,36 @@ const DepositForm: React.FC<DepositFormProps> = () => {
   const handleDeposit = async () => {
     if (!publicKey || !amount || parseFloat(amount) <= 0) return;
     
+    // Enhanced input validation
+    const amountValue = parseFloat(amount);
+    if (isNaN(amountValue) || amountValue < 0.1 || amountValue > 100) {
+      alert('Amount must be between 0.1 and 100 SOL');
+      return;
+    }
+    
+    if (committedDays < 1 || committedDays > 365) {
+      alert('Commitment period must be between 1 and 365 days');
+      return;
+    }
+    
+    // Sanitize inputs to prevent injection attacks
+    const sanitizedAmount = Math.max(0.1, Math.min(100, amountValue));
+    const sanitizedDays = Math.max(1, Math.min(365, Math.floor(committedDays)));
+    
     setIsLoading(true);
     try {
+      // Calculate expected values for slippage protection
+      const depositAmount = sanitizedAmount * LAMPORTS_PER_SOL;
+      const expectedFee = depositAmount * 0.005; // 0.5% fee
+      const minExpectedAmount = depositAmount - expectedFee - (depositAmount * 0.01); // 1% slippage tolerance
+      const deadline = Math.floor(Date.now() / 1000) + 300; // 5 minutes from now
+      
       // TODO: Implement actual deposit logic with Anchor
       console.log('Depositing:', {
-        amount: parseFloat(amount) * LAMPORTS_PER_SOL,
-        committedDays,
+        amount: depositAmount,
+        committedDays: sanitizedDays,
+        minExpectedAmount,
+        deadline,
         user: publicKey.toString()
       });
       
@@ -33,6 +57,12 @@ const DepositForm: React.FC<DepositFormProps> = () => {
       setCommittedDays(1);
     } catch (error) {
       console.error('Deposit failed:', error);
+      // Enhanced error handling
+      if (error instanceof Error) {
+        alert(`Deposit failed: ${error.message}`);
+      } else {
+        alert('Deposit failed: Unknown error occurred');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -79,9 +109,24 @@ const DepositForm: React.FC<DepositFormProps> = () => {
           <input
             type="number"
             value={amount}
-            onChange={(e) => setAmount(e.target.value)}
+            onChange={(e) => {
+              const value = e.target.value;
+              // Sanitize input to prevent malicious values
+              if (value === '' || (/^\d*\.?\d*$/.test(value) && parseFloat(value) <= 1000)) {
+                setAmount(value);
+              }
+            }}
+            onPaste={(e) => {
+              // Prevent pasting malicious content
+              e.preventDefault();
+              const paste = (e.clipboardData || (window as any).clipboardData).getData('text');
+              if (/^\d*\.?\d*$/.test(paste) && parseFloat(paste) <= 1000) {
+                setAmount(paste);
+              }
+            }}
             placeholder="0.0"
             min="0.1"
+            max="100"
             step="0.1"
             className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
           />
