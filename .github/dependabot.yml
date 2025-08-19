@@ -1,0 +1,121 @@
+version: 2
+updates:
+  # Rust dependencies
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "security-team"
+    assignees:
+      - "security-team"
+    commit-message:
+      prefix: "🔒 security"
+      include: "scope"
+    labels:
+      - "security"
+      - "dependencies"
+    allow:
+      - dependency-type: "direct"
+      - dependency-type: "indirect"
+    ignore:
+      # Ignore patch updates for stable dependencies
+      - dependency-name: "*"
+        update-types: ["version-update:semver-patch"]
+        
+  # Fuzz testing dependencies
+  - package-ecosystem: "cargo"
+    directory: "/fuzz"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "06:00"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "security-team"
+    labels:
+      - "security"
+      - "fuzz-testing"
+
+  # NPM dependencies (root)
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "wednesday"
+      time: "06:00"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "security-team"
+    assignees:
+      - "security-team"
+    commit-message:
+      prefix: "🔒 security"
+      include: "scope"
+    labels:
+      - "security"
+      - "dependencies"
+      - "npm"
+    versioning-strategy: "increase"
+    allow:
+      - dependency-type: "direct"
+      - dependency-type: "indirect"
+    ignore:
+      # Ignore dev dependencies that don't affect production
+      - dependency-name: "@types/*"
+        update-types: ["version-update:semver-patch"]
+
+  # Frontend dependencies
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "thursday"
+      time: "06:00"
+    open-pull-requests-limit: 15
+    reviewers:
+      - "frontend-team"
+      - "security-team"
+    assignees:
+      - "frontend-team"
+    commit-message:
+      prefix: "🌐 frontend"
+      include: "scope"
+    labels:
+      - "frontend"
+      - "dependencies"
+      - "npm"
+    versioning-strategy: "increase"
+    allow:
+      - dependency-type: "direct"
+      - dependency-type: "indirect"
+    ignore:
+      # Ignore patch updates for React and testing libraries
+      - dependency-name: "react"
+        update-types: ["version-update:semver-patch"]
+      - dependency-name: "react-dom"
+        update-types: ["version-update:semver-patch"]
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "friday"
+      time: "06:00"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "devops-team"
+      - "security-team"
+    assignees:
+      - "devops-team"
+    commit-message:
+      prefix: "🔧 ci/cd"
+      include: "scope"
+    labels:
+      - "ci/cd"
+      - "github-actions"
+      - "security"
