@@ -6,6 +6,21 @@ use mpl_token_metadata::instruction as mpl_instruction;
 use pyth_sdk_solana::{load_price_feed_from_account_info, PriceFeed};
 use switchboard_v2::{AggregatorAccountData, SwitchboardDecimal};
 
+// Program ID will be set based on the target environment during build
+#[cfg(feature = "localnet")]
+declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
+
+#[cfg(feature = "devnet")]
+declare_id!("DEVbN3xfS8Tt4uQqDmYs9ZTGEVhGomVFqMtFA7RjsW7d");
+
+#[cfg(feature = "testnet")]
+declare_id!("TESTsK9xfS8Tt4uQqDmYs9ZTGEVhGomVFqMtFA7RjsW7d");
+
+#[cfg(feature = "mainnet")]
+declare_id!("MAINbN3xfS8Tt4uQqDmYs9ZTGEVhGomVFqMtFA7RjsW7d");
+
+// Default to localnet if no feature is specified
+#[cfg(not(any(feature = "localnet", feature = "devnet", feature = "testnet", feature = "mainnet")))]
 declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
 
 // Rate limiting constants
@@ -1282,8 +1297,6 @@ pub enum ErrorCode {
     
     #[msg("Pool limit exceeded")]
     PoolLimitExceeded,
-<<<<<<< Current (Your changes)
-=======
     
     #[msg("Oracle price is stale")]
     StalePriceData,
@@ -1338,6 +1351,5 @@ pub enum ErrorCode {
     
     #[msg("MEV protection active - operation too soon")]
     MevProtectionActive,
->>>>>>> Incoming (Background Agent changes)
 }
 
