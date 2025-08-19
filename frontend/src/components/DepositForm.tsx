@@ -12,24 +12,34 @@ const DepositForm: React.FC<DepositFormProps> = () => {
   const [committedDays, setCommittedDays] = useState<number>(1);
   const [isLoading, setIsLoading] = useState(false);
   const [showPenaltyInfo, setShowPenaltyInfo] = useState(false);
+  const [error, setError] = useState<string>('');
 
   const handleDeposit = async () => {
     if (!publicKey || !amount || parseFloat(amount) <= 0) return;
     
-    // Enhanced input validation
-    const amountValue = parseFloat(amount);
-    if (isNaN(amountValue) || amountValue < 0.1 || amountValue > 100) {
-      alert('Amount must be between 0.1 and 100 SOL');
+    // Use SecurityValidator functions for input validation
+    const securityValidator = (window as any).securityValidator;
+    if (!securityValidator) {
+      console.error('Security validator not available');
+      return;
+    }
+    
+    // Enhanced input validation with sanitization
+    const sanitizedAmountStr = securityValidator.sanitizeInput(amount);
+    const amountValue = securityValidator.validateNumericInput(sanitizedAmountStr, 0.1, 100);
+    
+    if (amountValue === null) {
+      setError('Amount must be between 0.1 and 100 SOL');
       return;
     }
     
     if (committedDays < 1 || committedDays > 365) {
-      alert('Commitment period must be between 1 and 365 days');
+      setError('Commitment period must be between 1 and 365 days');
       return;
     }
     
-    // Sanitize inputs to prevent injection attacks
-    const sanitizedAmount = Math.max(0.1, Math.min(100, amountValue));
+    // Use validated values
+    const sanitizedAmount = amountValue;
     const sanitizedDays = Math.max(1, Math.min(365, Math.floor(committedDays)));
     
     setIsLoading(true);

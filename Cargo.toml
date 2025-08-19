@@ -22,6 +22,13 @@ anchor-client = "0.29.0"
 [lib]
 crate-type = ["cdylib", "lib"]
 
+[features]
+default = []
+localnet = []
+devnet = []
+testnet = []
+mainnet = []
+
 [profile.release]
 overflow-checks = true
 lto = true

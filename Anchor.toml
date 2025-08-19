@@ -6,13 +6,13 @@ skip-lint = false
 defi_trust_fund = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
 
 [programs.devnet]
-defi_trust_fund = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
+defi_trust_fund = "DEVbN3xfS8Tt4uQqDmYs9ZTGEVhGomVFqMtFA7RjsW7d"
 
 [programs.testnet]
-defi_trust_fund = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
+defi_trust_fund = "TESTsK9xfS8Tt4uQqDmYs9ZTGEVhGomVFqMtFA7RjsW7d"
 
 [programs.mainnet]
-defi_trust_fund = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
+defi_trust_fund = "MAINbN3xfS8Tt4uQqDmYs9ZTGEVhGomVFqMtFA7RjsW7d"
 
 [registry]
 url = "https://api.apr.dev"

@@ -1,0 +1,73 @@
+{
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-01",
+  "environments": {
+    "localnet": {
+      "programId": "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS",
+      "rpcUrl": "http://localhost:8899",
+      "securityLevel": "development",
+      "features": {
+        "rateLimiting": true,
+        "slippageProtection": true,
+        "mevProtection": false,
+        "oracleValidation": false
+      }
+    },
+    "devnet": {
+      "programId": "DEVbN3xfS8Tt4uQqDmYs9ZTGEVhGomVFqMtFA7RjsW7d",
+      "rpcUrl": "https://api.devnet.solana.com",
+      "securityLevel": "testing",
+      "features": {
+        "rateLimiting": true,
+        "slippageProtection": true,
+        "mevProtection": true,
+        "oracleValidation": true
+      }
+    },
+    "testnet": {
+      "programId": "TESTsK9xfS8Tt4uQqDmYs9ZTGEVhGomVFqMtFA7RjsW7d",
+      "rpcUrl": "https://api.testnet.solana.com",
+      "securityLevel": "staging",
+      "features": {
+        "rateLimiting": true,
+        "slippageProtection": true,
+        "mevProtection": true,
+        "oracleValidation": true
+      }
+    },
+    "mainnet": {
+      "programId": "MAINbN3xfS8Tt4uQqDmYs9ZTGEVhGomVFqMtFA7RjsW7d",
+      "rpcUrl": "https://api.mainnet-beta.solana.com",
+      "securityLevel": "production",
+      "features": {
+        "rateLimiting": true,
+        "slippageProtection": true,
+        "mevProtection": true,
+        "oracleValidation": true
+      }
+    }
+  },
+  "securityChecks": {
+    "required": [
+      "walletConnection",
+      "networkValidation",
+      "inputSanitization",
+      "arithmeticSafety",
+      "accessControl"
+    ],
+    "recommended": [
+      "cspHeaders",
+      "httpsConnection",
+      "rateLimiting",
+      "slippageProtection"
+    ]
+  },
+  "limits": {
+    "maxDepositPerUser": 1000,
+    "maxTotalStaked": 100000,
+    "minStakeAmount": 0.1,
+    "maxStakeAmount": 100,
+    "maxCommitmentDays": 365,
+    "minCommitmentDays": 1
+  }
+}
