@@ -29,6 +29,15 @@
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
+    "test:coverage": "react-scripts test --coverage --watchAll=false",
+    "test:security": "react-scripts test --testPathPattern=comprehensive-frontend-tests --watchAll=false",
+    "test:ci": "CI=true react-scripts test --coverage --watchAll=false",
+    "lint": "eslint src/ --ext .ts,.tsx,.js,.jsx",
+    "lint:fix": "eslint src/ --ext .ts,.tsx,.js,.jsx --fix",
+    "lint:security": "eslint src/ --ext .ts,.tsx,.js,.jsx --config .eslintrc.security.js",
+    "analyze": "npm run build && npx webpack-bundle-analyzer build/static/js/*.js",
+    "security:scan": "npm audit --audit-level=moderate",
+    "security:fix": "npm audit fix",
     "eject": "react-scripts eject"
   },
   "eslintConfig": {
@@ -52,6 +61,11 @@
   "devDependencies": {
     "@types/node": "^20.5.0",
     "@types/dompurify": "^3.0.2",
-    "@types/validator": "^13.11.1"
+    "@types/validator": "^13.11.1",
+    "@testing-library/react": "^13.4.0",
+    "@testing-library/jest-dom": "^5.16.5",
+    "@testing-library/user-event": "^14.4.3",
+    "@types/jest": "^29.5.5",
+    "jest-environment-jsdom": "^29.7.0"
   }
 }
